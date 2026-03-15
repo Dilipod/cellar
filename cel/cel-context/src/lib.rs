@@ -7,6 +7,6 @@ mod element;
 mod confidence;
 mod merge;
 
-pub use element::{ContextElement, ContextSource, ScreenContext};
+pub use element::{Bounds, ContextElement, ContextSource, ScreenContext};
 pub use confidence::{ConfidenceBehavior, ConfidenceThresholds};
 pub use merge::ContextMerger;
