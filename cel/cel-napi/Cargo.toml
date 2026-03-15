@@ -1,0 +1,26 @@
+[package]
+name = "cel-napi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CEL Node.js native bindings via napi-rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+cel-display = { workspace = true }
+cel-input = { workspace = true }
+cel-accessibility = { workspace = true }
+cel-context = { workspace = true }
+cel-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+# napi-rs bindings
+napi = { version = "2", features = ["async", "serde-json"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"

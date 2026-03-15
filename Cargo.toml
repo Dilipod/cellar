@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "cel/cel-display",
+    "cel/cel-input",
+    "cel/cel-accessibility",
+    "cel/cel-vision",
+    "cel/cel-network",
+    "cel/cel-context",
+    "cel/cel-store",
+    "cel/cel-napi",
+    "adapters/adapter-common",
+    "adapters/excel",
+    "adapters/sap-gui",
+    "adapters/bloomberg",
+    "adapters/metatrader",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "BUSL-1.1"
+repository = "https://github.com/dilipod/cellar"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+image = "0.25"
+rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json"] }
+thiserror = "1"
+async-trait = "0.1"
+
+# CEL internal crates
+cel-display = { path = "cel/cel-display" }
+cel-input = { path = "cel/cel-input" }
+cel-accessibility = { path = "cel/cel-accessibility" }
+cel-vision = { path = "cel/cel-vision" }
+cel-network = { path = "cel/cel-network" }
+cel-context = { path = "cel/cel-context" }
+cel-store = { path = "cel/cel-store" }
+adapter-common = { path = "adapters/adapter-common" }
