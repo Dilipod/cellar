@@ -1,0 +1,18 @@
+{
+  "name": "@cellar/recorder",
+  "version": "0.1.0",
+  "description": "CEL training recorder — passive observation and explicit record modes",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\"",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cellar/agent": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

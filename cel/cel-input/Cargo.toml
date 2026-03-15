@@ -1,0 +1,21 @@
+[package]
+name = "cel-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CEL input layer — injection and interception of mouse/keyboard events"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"

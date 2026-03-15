@@ -1,0 +1,19 @@
+{
+  "name": "@cellar/adapter-browser",
+  "version": "0.1.0",
+  "description": "CEL browser adapter — DOM-based context for web apps",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\"",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cellar/agent": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
