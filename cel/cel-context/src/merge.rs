@@ -1,14 +1,30 @@
 use crate::element::{Bounds, ContextElement, ContextSource, ScreenContext};
 use cel_accessibility::{AccessibilityElement, AccessibilityTree, ElementRole};
+use cel_display::ScreenCapture;
 
 /// Merges context from all available streams into a unified ScreenContext.
 pub struct ContextMerger {
     accessibility: Box<dyn AccessibilityTree>,
+    display: Option<Box<dyn ScreenCapture>>,
 }
 
 impl ContextMerger {
     pub fn new(accessibility: Box<dyn AccessibilityTree>) -> Self {
-        Self { accessibility }
+        Self {
+            accessibility,
+            display: None,
+        }
+    }
+
+    /// Create a merger with display layer for foreground app detection.
+    pub fn with_display(
+        accessibility: Box<dyn AccessibilityTree>,
+        display: Box<dyn ScreenCapture>,
+    ) -> Self {
+        Self {
+            accessibility,
+            display: Some(display),
+        }
     }
 
     /// Build a unified context by querying all available streams.
@@ -37,15 +53,37 @@ impl ContextMerger {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        // Detect foreground app/window from display layer
+        let (app, window) = self.detect_foreground();
+
         ScreenContext {
-            app: String::new(),   // TODO: detect foreground app
-            window: String::new(), // TODO: detect active window title
+            app,
+            window,
             elements,
             timestamp_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
         }
+    }
+
+    /// Detect the foreground application and window title.
+    /// Uses the display layer's window listing — first non-minimized window is the foreground.
+    fn detect_foreground(&self) -> (String, String) {
+        if let Some(display) = &self.display {
+            match display.list_windows() {
+                Ok(windows) => {
+                    // First non-minimized window is typically the foreground
+                    if let Some(fg) = windows.iter().find(|w| !w.is_minimized) {
+                        return (fg.app_name.clone(), fg.title.clone());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Could not list windows for foreground detection: {}", e);
+                }
+            }
+        }
+        (String::new(), String::new())
     }
 
     /// Merge additional elements from a native adapter (highest confidence).

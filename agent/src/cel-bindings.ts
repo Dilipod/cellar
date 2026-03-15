@@ -27,6 +27,19 @@ export interface CelNative {
   addKnowledge(dbPath: string, content: string, source: string): number;
   startRun(dbPath: string, workflowName: string, stepsTotal: number): number;
   finishRun(dbPath: string, runId: number, status: string): void;
+  logStep(
+    dbPath: string,
+    runId: number,
+    stepIndex: number,
+    stepId: string,
+    action: string,
+    success: boolean,
+    confidence: number,
+    contextSnapshot: string | null,
+    error: string | null,
+  ): number;
+  getRunHistory(dbPath: string, limit: number): string;
+  getStepResults(dbPath: string, runId: number): string;
 }
 
 /** Monitor info from CEL display layer. */
@@ -58,6 +71,32 @@ export interface KnowledgeFact {
   content: string;
   source: string;
   created_at: string;
+}
+
+/** Run history record from CEL Store. */
+export interface RunRecord {
+  id: number;
+  workflow_name: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  steps_completed: number;
+  steps_total: number;
+  interventions: number;
+}
+
+/** Step result record from CEL Store. */
+export interface StepRecord {
+  id: number;
+  run_id: number;
+  step_index: number;
+  step_id: string;
+  action: string;
+  success: boolean;
+  confidence: number;
+  context_snapshot: string | null;
+  error: string | null;
+  executed_at: string;
 }
 
 let _native: CelNative | null = null;
@@ -194,5 +233,42 @@ export class Cel {
   /** Finish a tracked workflow run. */
   finishRun(runId: number, status: "completed" | "failed"): void {
     this.native?.finishRun(this.dbPath, runId, status);
+  }
+
+  /** Log a step result during a workflow run. */
+  logStep(
+    runId: number,
+    stepIndex: number,
+    stepId: string,
+    action: string,
+    success: boolean,
+    confidence: number,
+    contextSnapshot?: string,
+    error?: string,
+  ): number {
+    if (!this.native) return -1;
+    return this.native.logStep(
+      this.dbPath,
+      runId,
+      stepIndex,
+      stepId,
+      action,
+      success,
+      confidence,
+      contextSnapshot ?? null,
+      error ?? null,
+    );
+  }
+
+  /** Get run history, most recent first. */
+  getRunHistory(limit = 20): RunRecord[] {
+    if (!this.native) return [];
+    return JSON.parse(this.native.getRunHistory(this.dbPath, limit));
+  }
+
+  /** Get step results for a specific run. */
+  getStepResults(runId: number): StepRecord[] {
+    if (!this.native) return [];
+    return JSON.parse(this.native.getStepResults(this.dbPath, runId));
   }
 }

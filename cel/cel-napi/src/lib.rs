@@ -15,7 +15,8 @@ pub fn cel_version() -> String {
 #[napi]
 pub fn get_context() -> napi::Result<String> {
     let a11y = cel_accessibility::create_tree();
-    let merger = cel_context::ContextMerger::new(a11y);
+    let display = cel_display::create_capture();
+    let merger = cel_context::ContextMerger::with_display(a11y, display);
     let context = merger.get_context();
     serde_json::to_string(&context).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -174,4 +175,55 @@ pub fn finish_run(db_path: String, run_id: i64, status: String) -> napi::Result<
     store
         .finish_run(run_id, &status)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Log a step result during a workflow run.
+#[napi]
+pub fn log_step(
+    db_path: String,
+    run_id: i64,
+    step_index: u32,
+    step_id: String,
+    action: String,
+    success: bool,
+    confidence: f64,
+    context_snapshot: Option<String>,
+    error: Option<String>,
+) -> napi::Result<i64> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    store
+        .log_step(
+            run_id,
+            step_index,
+            &step_id,
+            &action,
+            success,
+            confidence,
+            context_snapshot.as_deref(),
+            error.as_deref(),
+        )
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Get run history from the CEL Store. Returns JSON string.
+#[napi]
+pub fn get_run_history(db_path: String, limit: u32) -> napi::Result<String> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let history = store
+        .get_run_history(limit)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&history).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Get step results for a specific run. Returns JSON string.
+#[napi]
+pub fn get_step_results(db_path: String, run_id: i64) -> napi::Result<String> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let steps = store
+        .get_step_results(run_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&steps).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
