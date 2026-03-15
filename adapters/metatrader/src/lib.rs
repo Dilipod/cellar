@@ -32,3 +32,36 @@ impl Adapter for MetaTraderAdapter {
         Err(AdapterError::OperationFailed(format!("Action '{}' not implemented", action)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adapter_info() {
+        let adapter = MetaTraderAdapter::new();
+        let info = adapter.info();
+        assert_eq!(info.name, "metatrader");
+        assert_eq!(info.display_name, "MetaTrader 4/5");
+        assert!(info.platforms.contains(&"windows".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_not_available() {
+        let adapter = MetaTraderAdapter::new();
+        assert!(!adapter.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn test_connect_fails() {
+        let mut adapter = MetaTraderAdapter::new();
+        assert!(adapter.connect().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_elements_empty() {
+        let adapter = MetaTraderAdapter::new();
+        let elements = adapter.get_elements().await.unwrap();
+        assert!(elements.is_empty());
+    }
+}

@@ -32,3 +32,49 @@ impl Adapter for SapGuiAdapter {
         Err(AdapterError::OperationFailed(format!("Action '{}' not implemented", action)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adapter_info() {
+        let adapter = SapGuiAdapter::new();
+        let info = adapter.info();
+        assert_eq!(info.name, "sap-gui");
+        assert_eq!(info.display_name, "SAP GUI");
+        assert!(info.platforms.contains(&"windows".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_not_available() {
+        let adapter = SapGuiAdapter::new();
+        assert!(!adapter.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn test_connect_fails() {
+        let mut adapter = SapGuiAdapter::new();
+        assert!(adapter.connect().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_ok() {
+        let mut adapter = SapGuiAdapter::new();
+        assert!(adapter.disconnect().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_elements_empty() {
+        let adapter = SapGuiAdapter::new();
+        let elements = adapter.get_elements().await.unwrap();
+        assert!(elements.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_fails() {
+        let adapter = SapGuiAdapter::new();
+        let result = adapter.execute_action("test", serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+}

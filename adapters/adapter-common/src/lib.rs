@@ -62,3 +62,50 @@ pub trait Adapter: Send + Sync {
         params: serde_json::Value,
     ) -> Result<serde_json::Value, AdapterError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adapter_info_serialization() {
+        let info = AdapterInfo {
+            name: "test".into(),
+            display_name: "Test Adapter".into(),
+            supported_versions: "1.0+".into(),
+            platforms: vec!["windows".into(), "macos".into()],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: AdapterInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "test");
+        assert_eq!(back.display_name, "Test Adapter");
+        assert_eq!(back.platforms.len(), 2);
+    }
+
+    #[test]
+    fn test_adapter_error_display() {
+        assert_eq!(AdapterError::AppNotFound.to_string(), "App not running or not found");
+        assert_eq!(AdapterError::ConnectionLost.to_string(), "Connection lost");
+        assert_eq!(
+            AdapterError::Unavailable("no COM".into()).to_string(),
+            "Adapter not available: no COM"
+        );
+        assert_eq!(
+            AdapterError::OperationFailed("bad action".into()).to_string(),
+            "Operation failed: bad action"
+        );
+    }
+
+    #[test]
+    fn test_adapter_info_clone() {
+        let info = AdapterInfo {
+            name: "clone-test".into(),
+            display_name: "Clone Test".into(),
+            supported_versions: "any".into(),
+            platforms: vec!["linux".into()],
+        };
+        let cloned = info.clone();
+        assert_eq!(info.name, cloned.name);
+        assert_eq!(info.platforms, cloned.platforms);
+    }
+}

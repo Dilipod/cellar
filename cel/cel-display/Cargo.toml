@@ -12,3 +12,6 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 xcap = "0.8"
+
+[dev-dependencies]
+serde_json = { workspace = true }

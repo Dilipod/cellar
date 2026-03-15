@@ -32,3 +32,36 @@ impl Adapter for BloombergAdapter {
         Err(AdapterError::OperationFailed(format!("Action '{}' not implemented", action)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adapter_info() {
+        let adapter = BloombergAdapter::new();
+        let info = adapter.info();
+        assert_eq!(info.name, "bloomberg");
+        assert_eq!(info.display_name, "Bloomberg Terminal");
+        assert!(info.platforms.contains(&"windows".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_not_available() {
+        let adapter = BloombergAdapter::new();
+        assert!(!adapter.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn test_connect_fails() {
+        let mut adapter = BloombergAdapter::new();
+        assert!(adapter.connect().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_elements_empty() {
+        let adapter = BloombergAdapter::new();
+        let elements = adapter.get_elements().await.unwrap();
+        assert!(elements.is_empty());
+    }
+}

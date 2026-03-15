@@ -196,4 +196,202 @@ mod tests {
         let iou = bounds_overlap(&a, &b);
         assert!(iou > 0.0 && iou < 1.0);
     }
+
+    #[test]
+    fn test_bounds_overlap_adjacent() {
+        // Touching but not overlapping
+        let a = Bounds { x: 0, y: 0, width: 50, height: 50 };
+        let b = Bounds { x: 50, y: 0, width: 50, height: 50 };
+        assert_eq!(bounds_overlap(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn test_bounds_overlap_contained() {
+        // b fully contained in a
+        let a = Bounds { x: 0, y: 0, width: 200, height: 200 };
+        let b = Bounds { x: 50, y: 50, width: 50, height: 50 };
+        let iou = bounds_overlap(&a, &b);
+        // IoU = 2500 / (40000 + 2500 - 2500) = 2500 / 40000 = 0.0625
+        assert!(iou > 0.0 && iou < 0.1);
+    }
+
+    #[test]
+    fn test_get_context_with_stub() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let ctx = merger.get_context();
+        // Stub returns a root window element
+        assert!(!ctx.elements.is_empty());
+        assert_eq!(ctx.elements[0].element_type, "window");
+        assert_eq!(ctx.elements[0].confidence, 0.85);
+        assert_eq!(ctx.elements[0].source, ContextSource::AccessibilityTree);
+        assert!(ctx.timestamp_ms > 0);
+    }
+
+    #[test]
+    fn test_merge_native_elements_overrides_by_id() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = merger.get_context();
+
+        let native = vec![ContextElement {
+            id: "root".into(), // Same ID as stub root
+            label: Some("Excel".into()),
+            element_type: "window".into(),
+            value: None,
+            bounds: None,
+            confidence: 0.98,
+            source: ContextSource::NativeApi,
+        }];
+
+        merger.merge_native_elements(&mut ctx, native);
+        let root = ctx.elements.iter().find(|e| e.id == "root").unwrap();
+        assert_eq!(root.confidence, 0.98); // Overridden
+        assert_eq!(root.source, ContextSource::NativeApi);
+        assert_eq!(root.label.as_deref(), Some("Excel"));
+    }
+
+    #[test]
+    fn test_merge_native_elements_adds_new() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = merger.get_context();
+        let initial_count = ctx.elements.len();
+
+        let native = vec![ContextElement {
+            id: "excel:A1".into(),
+            label: Some("Cell A1".into()),
+            element_type: "table_cell".into(),
+            value: Some("Revenue".into()),
+            bounds: Some(Bounds { x: 120, y: 200, width: 80, height: 20 }),
+            confidence: 0.98,
+            source: ContextSource::NativeApi,
+        }];
+
+        merger.merge_native_elements(&mut ctx, native);
+        assert_eq!(ctx.elements.len(), initial_count + 1);
+        // Highest confidence should be first after sort
+        assert_eq!(ctx.elements[0].confidence, 0.98);
+    }
+
+    #[test]
+    fn test_merge_vision_elements_no_overlap() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = ScreenContext {
+            app: "test".into(),
+            window: "test".into(),
+            elements: vec![],
+            timestamp_ms: 0,
+        };
+
+        let vision = vec![ContextElement {
+            id: "vision:btn:1".into(),
+            label: Some("Submit".into()),
+            element_type: "button".into(),
+            value: None,
+            bounds: Some(Bounds { x: 500, y: 500, width: 100, height: 40 }),
+            confidence: 0.75,
+            source: ContextSource::Vision,
+        }];
+
+        merger.merge_vision_elements(&mut ctx, vision);
+        assert_eq!(ctx.elements.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_vision_elements_dominated_by_existing() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = ScreenContext {
+            app: "test".into(),
+            window: "test".into(),
+            elements: vec![ContextElement {
+                id: "a11y:btn:1".into(),
+                label: Some("OK".into()),
+                element_type: "button".into(),
+                value: None,
+                bounds: Some(Bounds { x: 100, y: 100, width: 80, height: 30 }),
+                confidence: 0.85,
+                source: ContextSource::AccessibilityTree,
+            }],
+            timestamp_ms: 0,
+        };
+
+        // Vision element in same location — should NOT be added (IoU > 0.5)
+        let vision = vec![ContextElement {
+            id: "vision:btn:1".into(),
+            label: Some("OK".into()),
+            element_type: "button".into(),
+            value: None,
+            bounds: Some(Bounds { x: 100, y: 100, width: 80, height: 30 }),
+            confidence: 0.70,
+            source: ContextSource::Vision,
+        }];
+
+        merger.merge_vision_elements(&mut ctx, vision);
+        assert_eq!(ctx.elements.len(), 1); // Not added — dominated
+    }
+
+    #[test]
+    fn test_elements_sorted_by_confidence() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = merger.get_context();
+
+        let native = vec![
+            ContextElement {
+                id: "low".into(), label: None, element_type: "text".into(),
+                value: None, bounds: None, confidence: 0.50,
+                source: ContextSource::NativeApi,
+            },
+            ContextElement {
+                id: "high".into(), label: None, element_type: "button".into(),
+                value: None, bounds: None, confidence: 0.99,
+                source: ContextSource::NativeApi,
+            },
+        ];
+
+        merger.merge_native_elements(&mut ctx, native);
+        // Should be sorted descending by confidence
+        for i in 0..ctx.elements.len() - 1 {
+            assert!(ctx.elements[i].confidence >= ctx.elements[i + 1].confidence);
+        }
+    }
+
+    #[test]
+    fn test_role_to_string_all_variants() {
+        let mappings = vec![
+            (ElementRole::Button, "button"),
+            (ElementRole::Input, "input"),
+            (ElementRole::Text, "text"),
+            (ElementRole::Window, "window"),
+            (ElementRole::List, "list"),
+            (ElementRole::ListItem, "list_item"),
+            (ElementRole::Menu, "menu"),
+            (ElementRole::MenuItem, "menu_item"),
+            (ElementRole::Checkbox, "checkbox"),
+            (ElementRole::ComboBox, "combobox"),
+            (ElementRole::Table, "table"),
+            (ElementRole::TableRow, "table_row"),
+            (ElementRole::TableCell, "table_cell"),
+            (ElementRole::Dialog, "dialog"),
+            (ElementRole::Tab, "tab"),
+            (ElementRole::TabItem, "tab_item"),
+            (ElementRole::RadioButton, "radio_button"),
+            (ElementRole::Slider, "slider"),
+            (ElementRole::ScrollBar, "scrollbar"),
+            (ElementRole::TreeView, "tree_view"),
+            (ElementRole::TreeItem, "tree_item"),
+            (ElementRole::Toolbar, "toolbar"),
+            (ElementRole::StatusBar, "status_bar"),
+            (ElementRole::Group, "group"),
+            (ElementRole::Image, "image"),
+            (ElementRole::Link, "link"),
+            (ElementRole::Custom("widget".into()), "widget"),
+        ];
+        for (role, expected) in mappings {
+            assert_eq!(role_to_string(&role), expected);
+        }
+    }
 }
