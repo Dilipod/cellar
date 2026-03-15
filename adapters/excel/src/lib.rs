@@ -166,6 +166,18 @@ impl Adapter for ExcelAdapter {
                 Ok(serde_json::json!({ "values": [] }))
             }
 
+            "write_range" => {
+                let sheet = params["sheet"].as_str().unwrap_or("Sheet1");
+                let range = params["range"]
+                    .as_str()
+                    .ok_or_else(|| AdapterError::OperationFailed("Missing 'range' parameter".into()))?;
+                let _values = &params["values"];
+                tracing::debug!("Writing to range {}!{}", sheet, range);
+                // TODO: COM call to write range
+                // Range(range).Value = 2D array
+                Ok(serde_json::json!({ "success": true }))
+            }
+
             "active_sheet" => {
                 // TODO: ActiveSheet.Name
                 Ok(serde_json::json!({ "name": "Sheet1" }))
@@ -195,7 +207,7 @@ impl Adapter for ExcelAdapter {
             }
 
             _ => Err(AdapterError::OperationFailed(format!(
-                "Unknown Excel action: '{}'. Available: read_cell, write_cell, read_range, active_sheet, list_sheets, select_sheet, run_macro",
+                "Unknown Excel action: '{}'. Available: read_cell, write_cell, read_range, write_range, active_sheet, list_sheets, select_sheet, run_macro",
                 action
             ))),
         }
@@ -220,5 +232,129 @@ mod tests {
         if !cfg!(target_os = "windows") {
             assert!(!adapter.is_available().await);
         }
+    }
+
+    #[tokio::test]
+    async fn test_default_impl() {
+        let adapter = ExcelAdapter::default();
+        assert_eq!(adapter.info().name, "excel");
+    }
+
+    #[tokio::test]
+    async fn test_connect_fails_on_non_windows() {
+        if cfg!(target_os = "windows") { return; }
+        let mut adapter = ExcelAdapter::new();
+        assert!(adapter.connect().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect() {
+        let mut adapter = ExcelAdapter::new();
+        assert!(adapter.disconnect().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_elements_not_connected() {
+        let adapter = ExcelAdapter::new();
+        assert!(adapter.get_elements().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_action_not_connected() {
+        let adapter = ExcelAdapter::new();
+        let result = adapter.execute_action("read_cell", serde_json::json!({"cell": "A1"})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_unknown_action() {
+        let mut adapter = ExcelAdapter::new();
+        // Force connected state for testing
+        adapter.connected = true;
+        let result = adapter.execute_action("nonexistent", serde_json::json!({})).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unknown Excel action"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn test_read_cell_connected() {
+        let mut adapter = ExcelAdapter::new();
+        adapter.connected = true;
+        let result = adapter.execute_action("read_cell", serde_json::json!({"cell": "A1"})).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cell_value_serialization() {
+        let values = vec![
+            CellValue::Empty,
+            CellValue::Text("Hello".into()),
+            CellValue::Number(42.5),
+            CellValue::Boolean(true),
+            CellValue::Error("#REF!".into()),
+        ];
+        for val in values {
+            let json = serde_json::to_string(&val).unwrap();
+            let _back: CellValue = serde_json::from_str(&json).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_cell_missing_param() {
+        let mut adapter = ExcelAdapter::new();
+        adapter.connected = true;
+        let result = adapter.execute_action("read_cell", serde_json::json!({})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_write_range_action() {
+        let mut adapter = ExcelAdapter::new();
+        adapter.connected = true;
+        let result = adapter.execute_action(
+            "write_range",
+            serde_json::json!({"range": "A1:B2", "values": [[1, 2], [3, 4]]}),
+        ).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_all_actions_connected() {
+        let mut adapter = ExcelAdapter::new();
+        adapter.connected = true;
+
+        // read_cell
+        let r = adapter.execute_action("read_cell", serde_json::json!({"cell": "A1"})).await;
+        assert!(r.is_ok());
+
+        // write_cell
+        let r = adapter.execute_action("write_cell", serde_json::json!({"cell": "A1", "value": 42})).await;
+        assert!(r.is_ok());
+
+        // read_range
+        let r = adapter.execute_action("read_range", serde_json::json!({"range": "A1:B2"})).await;
+        assert!(r.is_ok());
+
+        // write_range
+        let r = adapter.execute_action("write_range", serde_json::json!({"range": "A1:B2", "values": []})).await;
+        assert!(r.is_ok());
+
+        // active_sheet
+        let r = adapter.execute_action("active_sheet", serde_json::json!({})).await;
+        assert!(r.is_ok());
+
+        // list_sheets
+        let r = adapter.execute_action("list_sheets", serde_json::json!({})).await;
+        assert!(r.is_ok());
+
+        // select_sheet
+        let r = adapter.execute_action("select_sheet", serde_json::json!({"name": "Sheet2"})).await;
+        assert!(r.is_ok());
+
+        // run_macro
+        let r = adapter.execute_action("run_macro", serde_json::json!({"macro": "MyMacro"})).await;
+        assert!(r.is_ok());
     }
 }

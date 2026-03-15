@@ -57,3 +57,69 @@ impl NetworkMonitor for StubNetworkMonitor {
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stub_monitor_start_stop() {
+        let mut monitor = StubNetworkMonitor;
+        assert!(monitor.start().is_ok());
+        assert!(monitor.stop().is_ok());
+    }
+
+    #[test]
+    fn test_stub_monitor_drain_empty() {
+        let mut monitor = StubNetworkMonitor;
+        monitor.start().unwrap();
+        let events = monitor.drain_events();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_network_event_serialization() {
+        let event = NetworkEvent {
+            timestamp_ms: 1700000000000,
+            method: Some("GET".into()),
+            url: "https://api.example.com/data".into(),
+            status: Some(200),
+            content_type: Some("application/json".into()),
+            body_size: Some(4096),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: NetworkEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.url, "https://api.example.com/data");
+        assert_eq!(back.method.as_deref(), Some("GET"));
+        assert_eq!(back.status, Some(200));
+        assert_eq!(back.body_size, Some(4096));
+    }
+
+    #[test]
+    fn test_network_event_minimal() {
+        let event = NetworkEvent {
+            timestamp_ms: 0,
+            method: None,
+            url: "ws://localhost:8080".into(),
+            status: None,
+            content_type: None,
+            body_size: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: NetworkEvent = serde_json::from_str(&json).unwrap();
+        assert!(back.method.is_none());
+        assert!(back.status.is_none());
+    }
+
+    #[test]
+    fn test_network_error_display() {
+        assert_eq!(
+            NetworkError::Unavailable("no pcap".into()).to_string(),
+            "Network monitoring not available: no pcap"
+        );
+        assert_eq!(
+            NetworkError::Failed("connection reset".into()).to_string(),
+            "Monitor failed: connection reset"
+        );
+    }
+}
