@@ -1,30 +1,15 @@
 //! CEL Input Layer
 //!
 //! Input injection and interception for mouse and keyboard events.
-//! Supports Windows (SendInput / Win32 hooks) and macOS (CGEvent / event taps).
+//! Uses enigo for cross-platform input simulation (Windows, macOS, Linux).
 
 mod inject;
+mod enigo_input;
 
-#[cfg(target_os = "windows")]
-mod windows;
-
-#[cfg(target_os = "macos")]
-mod macos;
-
-pub use inject::{InputController, InputEvent, InputError, MouseButton};
+pub use inject::{InputController, InputError, InputEvent, MouseButton};
+pub use enigo_input::EnigoInput;
 
 /// Create a platform-appropriate input controller.
-pub fn create_controller() -> Box<dyn InputController> {
-    #[cfg(target_os = "windows")]
-    {
-        Box::new(windows::WindowsInput::new())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Box::new(macos::MacInput::new())
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        Box::new(inject::StubInput)
-    }
+pub fn create_controller() -> Result<Box<dyn InputController>, InputError> {
+    Ok(Box::new(EnigoInput::new()?))
 }

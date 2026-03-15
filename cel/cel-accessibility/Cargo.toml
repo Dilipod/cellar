@@ -10,11 +10,3 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = [
-    "Win32_UI_Accessibility",
-] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.10"

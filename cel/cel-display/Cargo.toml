@@ -11,13 +11,4 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = [
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Direct3D11",
-] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-core-graphics = "0.24"
+xcap = "0.8"
