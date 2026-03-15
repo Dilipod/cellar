@@ -6,7 +6,9 @@ import {
   WorkflowEngine,
   loadWorkflow,
   importWorkflow,
+  executeAction,
   type EngineCallbacks,
+  type ScreenContext,
 } from "@cellar/agent";
 
 export const runCommand = new Command("run")
@@ -52,24 +54,57 @@ export const runCommand = new Command("run")
     const runId = cel.startRun(workflow.name, workflow.steps.length);
     console.log(`\nStarting run #${runId} with priority ${opts.priority}...`);
 
+    let lastContext: ScreenContext = { app: "", window: "", elements: [], timestamp_ms: 0 };
+
     const callbacks: EngineCallbacks = {
-      getContext: async () => cel.getContext(),
+      getContext: async () => {
+        lastContext = cel.getContext();
+        return lastContext;
+      },
       executeAction: async (step) => {
         console.log(`  [${step.id}] ${step.description}`);
-        // TODO: Map step.action to cel input calls
-        return true;
+        const maxConf = lastContext.elements.length > 0
+          ? Math.max(...lastContext.elements.map((e) => e.confidence))
+          : 0;
+        try {
+          const success = await executeAction(cel, step, lastContext);
+          cel.logStep(
+            runId,
+            workflow.steps.indexOf(step),
+            step.id,
+            JSON.stringify(step.action),
+            success,
+            maxConf,
+            JSON.stringify({ app: lastContext.app, window: lastContext.window, elementCount: lastContext.elements.length }),
+          );
+          return success;
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          cel.logStep(
+            runId,
+            workflow.steps.indexOf(step),
+            step.id,
+            JSON.stringify(step.action),
+            false,
+            maxConf,
+            undefined,
+            errMsg,
+          );
+          throw err;
+        }
       },
       onPause: async (step, ctx) => {
         console.log(`  PAUSED at step ${step.id}: low confidence`);
-        console.log("  Press Enter to continue or Ctrl+C to abort...");
-        // TODO: Wait for user input
+        console.log("  Waiting 3s before retrying (Ctrl+C to abort)...");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
       },
       onStepComplete: (step, idx) => {
-        console.log(`  ✓ Step ${idx + 1}/${workflow.steps.length}: ${step.description}`);
+        console.log(`  Step ${idx + 1}/${workflow.steps.length}: ${step.description}`);
       },
       onComplete: (wf, status) => {
         cel.finishRun(runId, status as "completed" | "failed");
         console.log(`\nWorkflow "${wf.name}" ${status}.`);
+        engine.stop();
       },
       onLog: (level, msg) => {
         if (level === "error") console.error(`  [ERROR] ${msg}`);

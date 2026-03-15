@@ -29,6 +29,21 @@ pub struct RunRecord {
     pub interventions: u32,
 }
 
+/// A single step result logged during a workflow run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepRecord {
+    pub id: i64,
+    pub run_id: i64,
+    pub step_index: u32,
+    pub step_id: String,
+    pub action: String,
+    pub success: bool,
+    pub confidence: f64,
+    pub context_snapshot: Option<String>,
+    pub error: Option<String>,
+    pub executed_at: String,
+}
+
 impl CelStore {
     /// Open or create a CEL Store database at the given path.
     pub fn open(path: &str) -> Result<Self, StoreError> {
@@ -115,6 +130,19 @@ impl CelStore {
                 reference TEXT NOT NULL, -- env var name or keychain entry
                 created_at TEXT DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS step_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL REFERENCES run_history(id),
+                step_index INTEGER NOT NULL,
+                step_id TEXT NOT NULL,
+                action TEXT NOT NULL, -- JSON: the action taken
+                success INTEGER NOT NULL DEFAULT 1,
+                confidence REAL NOT NULL DEFAULT 0.0,
+                context_snapshot TEXT, -- JSON: screen context at time of step
+                error TEXT,
+                executed_at TEXT DEFAULT (datetime('now'))
+            );
             ",
         )?;
         Ok(())
@@ -167,6 +195,101 @@ impl CelStore {
         )?;
         Ok(())
     }
+
+    /// Log a step result during a workflow run.
+    pub fn log_step(
+        &self,
+        run_id: i64,
+        step_index: u32,
+        step_id: &str,
+        action: &str,
+        success: bool,
+        confidence: f64,
+        context_snapshot: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<i64, StoreError> {
+        self.conn.execute(
+            "INSERT INTO step_results (run_id, step_index, step_id, action, success, confidence, context_snapshot, error) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![run_id, step_index, step_id, action, success as i32, confidence, context_snapshot, error],
+        )?;
+        // Update steps_completed count on the run
+        self.conn.execute(
+            "UPDATE run_history SET steps_completed = (SELECT COUNT(*) FROM step_results WHERE run_id = ?1 AND success = 1) WHERE id = ?1",
+            rusqlite::params![run_id],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get step results for a workflow run.
+    pub fn get_step_results(&self, run_id: i64) -> Result<Vec<StepRecord>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, run_id, step_index, step_id, action, success, confidence, context_snapshot, error, executed_at FROM step_results WHERE run_id = ?1 ORDER BY step_index",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![run_id], |row| {
+            Ok(StepRecord {
+                id: row.get(0)?,
+                run_id: row.get(1)?,
+                step_index: row.get(2)?,
+                step_id: row.get(3)?,
+                action: row.get(4)?,
+                success: row.get::<_, i32>(5)? != 0,
+                confidence: row.get(6)?,
+                context_snapshot: row.get(7)?,
+                error: row.get(8)?,
+                executed_at: row.get(9)?,
+            })
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
+    }
+
+    /// Get run history, most recent first.
+    pub fn get_run_history(&self, limit: u32) -> Result<Vec<RunRecord>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, workflow_name, started_at, finished_at, status, steps_completed, steps_total, interventions FROM run_history ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit], |row| {
+            Ok(RunRecord {
+                id: row.get(0)?,
+                workflow_name: row.get(1)?,
+                started_at: row.get(2)?,
+                finished_at: row.get(3)?,
+                status: row.get(4)?,
+                steps_completed: row.get(5)?,
+                steps_total: row.get(6)?,
+                interventions: row.get(7)?,
+            })
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
+    }
+
+    /// Record an intervention (user correction during a run).
+    pub fn record_intervention(
+        &self,
+        run_id: i64,
+        step_index: u32,
+        agent_context: &str,
+        user_action: &str,
+        correct_action: Option<&str>,
+    ) -> Result<i64, StoreError> {
+        self.conn.execute(
+            "INSERT INTO interventions (run_id, step_index, agent_context, user_action, correct_action) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![run_id, step_index, agent_context, user_action, correct_action],
+        )?;
+        // Increment interventions counter on the run
+        self.conn.execute(
+            "UPDATE run_history SET interventions = interventions + 1 WHERE id = ?1",
+            rusqlite::params![run_id],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
 }
 
 #[cfg(test)]
@@ -197,5 +320,69 @@ mod tests {
         let run_id = store.start_run("daily-po", 5).unwrap();
         assert!(run_id > 0);
         store.finish_run(run_id, "completed").unwrap();
+    }
+
+    #[test]
+    fn test_log_step_and_retrieve() {
+        let store = CelStore::open_memory().unwrap();
+        let run_id = store.start_run("test-wf", 3).unwrap();
+
+        store.log_step(run_id, 0, "step-1", r#"{"type":"click"}"#, true, 0.95, Some(r#"{"app":"Excel"}"#), None).unwrap();
+        store.log_step(run_id, 1, "step-2", r#"{"type":"type"}"#, true, 0.88, None, None).unwrap();
+        store.log_step(run_id, 2, "step-3", r#"{"type":"key"}"#, false, 0.45, None, Some("Element not found")).unwrap();
+
+        let steps = store.get_step_results(run_id).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].step_id, "step-1");
+        assert!(steps[0].success);
+        assert_eq!(steps[0].confidence, 0.95);
+        assert!(steps[0].context_snapshot.is_some());
+        assert!(!steps[2].success);
+        assert!(steps[2].error.as_deref() == Some("Element not found"));
+    }
+
+    #[test]
+    fn test_steps_completed_auto_updates() {
+        let store = CelStore::open_memory().unwrap();
+        let run_id = store.start_run("test-wf", 3).unwrap();
+
+        store.log_step(run_id, 0, "s1", "{}", true, 0.9, None, None).unwrap();
+        store.log_step(run_id, 1, "s2", "{}", true, 0.9, None, None).unwrap();
+        store.log_step(run_id, 2, "s3", "{}", false, 0.4, None, Some("fail")).unwrap();
+
+        let history = store.get_run_history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].steps_completed, 2); // only 2 succeeded
+    }
+
+    #[test]
+    fn test_get_run_history() {
+        let store = CelStore::open_memory().unwrap();
+        store.start_run("wf-1", 3).unwrap();
+        store.start_run("wf-2", 5).unwrap();
+        store.start_run("wf-3", 1).unwrap();
+
+        let history = store.get_run_history(2).unwrap();
+        assert_eq!(history.len(), 2);
+        // Most recent first
+        assert_eq!(history[0].workflow_name, "wf-3");
+        assert_eq!(history[1].workflow_name, "wf-2");
+    }
+
+    #[test]
+    fn test_record_intervention() {
+        let store = CelStore::open_memory().unwrap();
+        let run_id = store.start_run("test-wf", 3).unwrap();
+
+        let id = store.record_intervention(
+            run_id, 1,
+            r#"{"elements":[]}"#,
+            r#"{"type":"click","x":100,"y":200}"#,
+            Some(r#"{"type":"click","target":"submit-btn"}"#),
+        ).unwrap();
+        assert!(id > 0);
+
+        let history = store.get_run_history(10).unwrap();
+        assert_eq!(history[0].interventions, 1);
     }
 }
