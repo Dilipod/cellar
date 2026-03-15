@@ -9,6 +9,7 @@ import { trainCommand } from "./commands/train.js";
 import { captureCommand } from "./commands/capture.js";
 import { contextCommand } from "./commands/context.js";
 import { historyCommand } from "./commands/history.js";
+import { memoryCommand } from "./commands/memory.js";
 
 const program = new Command();
 
@@ -25,6 +26,7 @@ program.addCommand(trainCommand);
 program.addCommand(captureCommand);
 program.addCommand(contextCommand);
 program.addCommand(historyCommand);
+program.addCommand(memoryCommand);
 
 program
   .command("live-view")
