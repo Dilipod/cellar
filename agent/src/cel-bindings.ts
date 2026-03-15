@@ -49,6 +49,8 @@ export interface CelNative {
   // Memory: Knowledge FTS5
   searchKnowledge(dbPath: string, query: string, workflowScope: string | null, limit: number): string;
   addScopedKnowledge(dbPath: string, content: string, source: string, workflowScope: string | null, tags: string | null): number;
+  // Eviction / TTL
+  runEviction(dbPath: string, runRetentionDays: number, knowledgeRetentionDays: number): string;
 }
 
 /** Monitor info from CEL display layer. */
@@ -115,6 +117,13 @@ export interface ScoredKnowledgeRecord {
   workflow_scope: string | null;
   score: number;
   created_at: string;
+}
+
+/** Eviction result from TTL cleanup. */
+export interface EvictionResult {
+  superseded_observations: number;
+  old_runs: number;
+  old_knowledge: number;
 }
 
 /** Step result record from CEL Store. */
@@ -345,6 +354,14 @@ export class Cel {
     return JSON.parse(
       this.native.searchKnowledge(this.dbPath, query, workflowScope ?? null, limit),
     );
+  }
+
+  // --- Eviction / TTL ---
+
+  /** Run eviction policies. Returns counts of deleted rows. */
+  runEviction(runRetentionDays = 90, knowledgeRetentionDays = 365): EvictionResult {
+    if (!this.native) return { superseded_observations: 0, old_runs: 0, old_knowledge: 0 };
+    return JSON.parse(this.native.runEviction(this.dbPath, runRetentionDays, knowledgeRetentionDays));
   }
 
   /** Add a scoped knowledge fact. */

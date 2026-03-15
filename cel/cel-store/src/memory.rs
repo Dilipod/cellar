@@ -54,6 +54,38 @@ pub struct ScoredKnowledge {
     pub created_at: String,
 }
 
+/// Configuration for data eviction/TTL policies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvictionConfig {
+    /// Days to keep run history (default: 90)
+    pub run_retention_days: u32,
+    /// Days to keep knowledge entries (default: 365)
+    pub knowledge_retention_days: u32,
+}
+
+impl Default for EvictionConfig {
+    fn default() -> Self {
+        Self {
+            run_retention_days: 90,
+            knowledge_retention_days: 365,
+        }
+    }
+}
+
+/// Result of an eviction run.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EvictionResult {
+    pub superseded_observations: usize,
+    pub old_runs: usize,
+    pub old_knowledge: usize,
+}
+
+impl EvictionResult {
+    pub fn total(&self) -> usize {
+        self.superseded_observations + self.old_runs + self.old_knowledge
+    }
+}
+
 /// Initialize the memory tables and FTS5 indexes.
 pub fn migrate_memory(conn: &Connection) -> Result<(), StoreError> {
     conn.execute_batch(
@@ -285,6 +317,90 @@ impl crate::CelStore {
         Ok(self.conn.last_insert_rowid())
     }
 
+    // --- TTL / Eviction ---
+
+    /// Delete observations older than `days` for a workflow.
+    /// Returns number of deleted rows.
+    pub fn evict_old_observations(&self, workflow_name: &str, days: u32) -> Result<usize, StoreError> {
+        let affected = self.conn.execute(
+            "DELETE FROM observations WHERE workflow_name = ?1 AND created_at < datetime('now', ?2)",
+            rusqlite::params![workflow_name, format!("-{} days", days)],
+        )?;
+        Ok(affected)
+    }
+
+    /// Delete low-priority superseded observations across all workflows.
+    /// Returns number of deleted rows.
+    pub fn evict_superseded_observations(&self) -> Result<usize, StoreError> {
+        let affected = self.conn.execute(
+            "DELETE FROM observations WHERE superseded_by IS NOT NULL",
+            [],
+        )?;
+        Ok(affected)
+    }
+
+    /// Cap observations per workflow, keeping the most recent by priority.
+    /// Returns number of deleted rows.
+    pub fn cap_observations(&self, workflow_name: &str, max_count: u32) -> Result<usize, StoreError> {
+        let affected = self.conn.execute(
+            "DELETE FROM observations WHERE workflow_name = ?1 AND id NOT IN (
+                SELECT id FROM observations WHERE workflow_name = ?1 AND superseded_by IS NULL
+                ORDER BY
+                    CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END,
+                    created_at DESC
+                LIMIT ?2
+            )",
+            rusqlite::params![workflow_name, max_count],
+        )?;
+        Ok(affected)
+    }
+
+    /// Delete old run history and step results older than `days`.
+    /// Returns number of deleted runs.
+    pub fn evict_old_runs(&self, days: u32) -> Result<usize, StoreError> {
+        // Delete step results first (FK constraint)
+        self.conn.execute(
+            "DELETE FROM step_results WHERE run_id IN (
+                SELECT id FROM run_history WHERE started_at < datetime('now', ?1)
+            )",
+            rusqlite::params![format!("-{} days", days)],
+        )?;
+        // Delete interventions
+        self.conn.execute(
+            "DELETE FROM interventions WHERE run_id IN (
+                SELECT id FROM run_history WHERE started_at < datetime('now', ?1)
+            )",
+            rusqlite::params![format!("-{} days", days)],
+        )?;
+        // Delete runs
+        let affected = self.conn.execute(
+            "DELETE FROM run_history WHERE started_at < datetime('now', ?1)",
+            rusqlite::params![format!("-{} days", days)],
+        )?;
+        Ok(affected)
+    }
+
+    /// Delete old knowledge entries older than `days`.
+    /// Returns number of deleted rows.
+    pub fn evict_old_knowledge(&self, days: u32) -> Result<usize, StoreError> {
+        let affected = self.conn.execute(
+            "DELETE FROM knowledge_scoped WHERE created_at < datetime('now', ?1)",
+            rusqlite::params![format!("-{} days", days)],
+        )?;
+        Ok(affected)
+    }
+
+    /// Run all eviction policies. Returns total rows deleted.
+    pub fn run_eviction(&self, config: &EvictionConfig) -> Result<EvictionResult, StoreError> {
+        let mut result = EvictionResult::default();
+
+        result.superseded_observations = self.evict_superseded_observations()?;
+        result.old_runs = self.evict_old_runs(config.run_retention_days)?;
+        result.old_knowledge = self.evict_old_knowledge(config.knowledge_retention_days)?;
+
+        Ok(result)
+    }
+
     /// Search knowledge using FTS5 full-text search.
     /// Returns results ranked by BM25 relevance score.
     pub fn search_knowledge(
@@ -481,5 +597,95 @@ mod tests {
         assert_eq!(obs[0].priority, ObservationPriority::High);
         assert_eq!(obs[1].priority, ObservationPriority::Medium);
         assert_eq!(obs[2].priority, ObservationPriority::Low);
+    }
+
+    #[test]
+    fn test_evict_superseded_observations() {
+        let store = CelStore::open_memory().unwrap();
+        let old_id = store.add_observation("wf", "old", &ObservationPriority::High, &[1], None, None).unwrap();
+        let new_id = store.add_observation("wf", "new", &ObservationPriority::High, &[2], None, None).unwrap();
+        store.supersede_observation(old_id, new_id).unwrap();
+
+        let deleted = store.evict_superseded_observations().unwrap();
+        assert_eq!(deleted, 1);
+
+        let obs = store.get_observations("wf", 10).unwrap();
+        assert_eq!(obs.len(), 1);
+        assert!(obs[0].content.contains("new"));
+    }
+
+    #[test]
+    fn test_cap_observations() {
+        let store = CelStore::open_memory().unwrap();
+        for i in 0..10 {
+            store.add_observation("wf", &format!("obs {}", i), &ObservationPriority::Low, &[1], None, None).unwrap();
+        }
+        store.add_observation("wf", "important", &ObservationPriority::High, &[1], None, None).unwrap();
+
+        let deleted = store.cap_observations("wf", 3).unwrap();
+        assert!(deleted > 0);
+
+        let obs = store.get_observations("wf", 10).unwrap();
+        assert!(obs.len() <= 3);
+        // High priority should survive
+        assert!(obs.iter().any(|o| o.content == "important"));
+    }
+
+    #[test]
+    fn test_evict_old_runs() {
+        let store = CelStore::open_memory().unwrap();
+        // Backdate the run to 100 days ago
+        store.conn.execute(
+            "INSERT INTO run_history (workflow_name, status, steps_total, started_at) VALUES ('wf', 'completed', 2, datetime('now', '-100 days'))",
+            [],
+        ).unwrap();
+
+        // 90 days retention — should evict the 100-day-old run
+        let deleted = store.evict_old_runs(90).unwrap();
+        assert_eq!(deleted, 1);
+        assert!(store.get_run_history(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_evict_old_runs_keeps_recent() {
+        let store = CelStore::open_memory().unwrap();
+        store.start_run("wf", 1).unwrap(); // created now
+
+        // 90 days retention — should keep the just-created run
+        let deleted = store.evict_old_runs(90).unwrap();
+        assert_eq!(deleted, 0);
+        assert_eq!(store.get_run_history(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_run_eviction_with_config() {
+        let store = CelStore::open_memory().unwrap();
+        // Backdate data so it's evictable
+        store.conn.execute(
+            "INSERT INTO observations (workflow_name, content, priority, source_run_ids, created_at) VALUES ('wf', 'old obs', 'low', '[]', datetime('now', '-200 days'))",
+            [],
+        ).unwrap();
+        let old_id = store.conn.last_insert_rowid();
+        let new_id = store.add_observation("wf", "new obs", &ObservationPriority::High, &[1], None, None).unwrap();
+        store.supersede_observation(old_id, new_id).unwrap();
+
+        store.conn.execute(
+            "INSERT INTO run_history (workflow_name, status, steps_total, started_at) VALUES ('wf', 'completed', 1, datetime('now', '-200 days'))",
+            [],
+        ).unwrap();
+
+        let config = EvictionConfig {
+            run_retention_days: 90,
+            knowledge_retention_days: 90,
+        };
+        let result = store.run_eviction(&config).unwrap();
+        assert!(result.total() > 0);
+    }
+
+    #[test]
+    fn test_eviction_config_defaults() {
+        let config = EvictionConfig::default();
+        assert_eq!(config.run_retention_days, 90);
+        assert_eq!(config.knowledge_retention_days, 365);
     }
 }
