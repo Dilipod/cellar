@@ -4,7 +4,14 @@
 
 use napi_derive::napi;
 
+/// Get the CEL runtime version.
+#[napi]
+pub fn cel_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Get the unified screen context — merges all available streams.
+/// Returns JSON string of ScreenContext.
 #[napi]
 pub fn get_context() -> napi::Result<String> {
     let a11y = cel_accessibility::create_tree();
@@ -15,27 +22,41 @@ pub fn get_context() -> napi::Result<String> {
 
 /// Capture a screenshot and return as base64-encoded PNG.
 #[napi]
-pub fn capture_screen() -> napi::Result<String> {
+pub fn capture_screen() -> napi::Result<napi::bindgen_prelude::Buffer> {
     let mut capture = cel_display::create_capture();
-    capture
-        .init()
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let frame = capture
         .capture_frame()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    // TODO: encode frame as PNG and base64
-    Ok(format!(
-        "frame:{}x{}:{}bytes",
-        frame.width,
-        frame.height,
-        frame.data.len()
-    ))
+    let png = cel_display::encode_png(&frame)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(png.into())
+}
+
+/// List available monitors. Returns JSON string.
+#[napi]
+pub fn list_monitors() -> napi::Result<String> {
+    let capture = cel_display::create_capture();
+    let monitors = capture
+        .list_monitors()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&monitors).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// List visible windows. Returns JSON string.
+#[napi]
+pub fn list_windows() -> napi::Result<String> {
+    let capture = cel_display::create_capture();
+    let windows = capture
+        .list_windows()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&windows).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 /// Move the mouse to absolute screen coordinates.
 #[napi]
 pub fn mouse_move(x: i32, y: i32) -> napi::Result<()> {
-    let controller = cel_input::create_controller();
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
     controller
         .mouse_move(x, y)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
@@ -44,22 +65,75 @@ pub fn mouse_move(x: i32, y: i32) -> napi::Result<()> {
 /// Click at absolute screen coordinates.
 #[napi]
 pub fn click(x: i32, y: i32) -> napi::Result<()> {
-    let controller = cel_input::create_controller();
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
     controller
         .click(x, y, cel_input::MouseButton::Left)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Right-click at absolute screen coordinates.
+#[napi]
+pub fn right_click(x: i32, y: i32) -> napi::Result<()> {
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    controller
+        .click(x, y, cel_input::MouseButton::Right)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Double-click at absolute screen coordinates.
+#[napi]
+pub fn double_click(x: i32, y: i32) -> napi::Result<()> {
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    controller
+        .double_click(x, y, cel_input::MouseButton::Left)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 /// Type a string of text.
 #[napi]
 pub fn type_text(text: String) -> napi::Result<()> {
-    let controller = cel_input::create_controller();
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
     controller
         .type_text(&text)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-/// Query the CEL Store knowledge layer.
+/// Press a single key (e.g., "Enter", "Tab", "Escape").
+#[napi]
+pub fn key_press(key: String) -> napi::Result<()> {
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    controller
+        .key_press(&key)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Press a key combination (e.g., ["Ctrl", "C"]).
+#[napi]
+pub fn key_combo(keys: Vec<String>) -> napi::Result<()> {
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+    controller
+        .key_combo(&key_refs)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Scroll at the current position.
+#[napi]
+pub fn scroll(dx: i32, dy: i32) -> napi::Result<()> {
+    let mut controller =
+        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    controller
+        .scroll(dx, dy)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Query the CEL Store knowledge layer. Returns JSON string.
 #[napi]
 pub fn query_knowledge(db_path: String, query: String) -> napi::Result<String> {
     let store =
@@ -68,4 +142,36 @@ pub fn query_knowledge(db_path: String, query: String) -> napi::Result<String> {
         .query_knowledge(&query)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     serde_json::to_string(&facts).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Add a knowledge fact to the CEL Store.
+#[napi]
+pub fn add_knowledge(db_path: String, content: String, source: String) -> napi::Result<i64> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let id = store
+        .add_knowledge(&content, &source)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(id)
+}
+
+/// Start a workflow run in the CEL Store. Returns the run ID.
+#[napi]
+pub fn start_run(db_path: String, workflow_name: String, steps_total: u32) -> napi::Result<i64> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let id = store
+        .start_run(&workflow_name, steps_total)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(id)
+}
+
+/// Finish a workflow run in the CEL Store.
+#[napi]
+pub fn finish_run(db_path: String, run_id: i64, status: String) -> napi::Result<()> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    store
+        .finish_run(run_id, &status)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
 }

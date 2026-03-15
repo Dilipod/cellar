@@ -1,30 +1,17 @@
 //! CEL Display Layer
 //!
 //! Screen capture and virtual framebuffer for the Context Execution Layer.
-//! Supports Windows (DXGI Desktop Duplication) and macOS (ScreenCaptureKit / CGImage).
+//! Uses xcap for cross-platform screen and window capture.
 
 mod capture;
+mod xcap_capture;
 
-#[cfg(target_os = "windows")]
-mod windows;
+pub use capture::{
+    encode_png, CaptureError, Frame, LatestFrame, MonitorInfo, ScreenCapture, WindowInfo,
+};
+pub use xcap_capture::XcapCapture;
 
-#[cfg(target_os = "macos")]
-mod macos;
-
-pub use capture::{Frame, ScreenCapture};
-
-/// Create a platform-appropriate screen capture instance.
+/// Create a screen capture instance.
 pub fn create_capture() -> Box<dyn ScreenCapture> {
-    #[cfg(target_os = "windows")]
-    {
-        Box::new(windows::WindowsCapture::new())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Box::new(macos::MacCapture::new())
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        Box::new(capture::StubCapture)
-    }
+    Box::new(XcapCapture::new())
 }

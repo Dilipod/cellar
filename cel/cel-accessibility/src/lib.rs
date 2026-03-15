@@ -1,30 +1,24 @@
 //! CEL Accessibility Layer
 //!
 //! Bridges platform accessibility APIs into a unified element tree.
-//! Windows: UI Automation. macOS: AXUIElement.
+//! - Windows: UI Automation (requires `uiautomation` crate — added when targeting Windows)
+//! - macOS: AXUIElement (requires `objc2` + `core-foundation` — added when targeting macOS)
+//! - Linux: Stub (AT-SPI2 support planned)
+//!
+//! The tree types and trait are platform-agnostic. Platform implementations
+//! are added as the target OS supports them.
 
 mod tree;
 
-#[cfg(target_os = "windows")]
-mod windows;
-
-#[cfg(target_os = "macos")]
-mod macos;
-
-pub use tree::{AccessibilityElement, AccessibilityError, AccessibilityTree, ElementRole, ElementState};
+pub use tree::{
+    AccessibilityElement, AccessibilityError, AccessibilityTree, Bounds, ElementRole, ElementState,
+    StubAccessibility,
+};
 
 /// Create a platform-appropriate accessibility tree provider.
 pub fn create_tree() -> Box<dyn AccessibilityTree> {
-    #[cfg(target_os = "windows")]
-    {
-        Box::new(windows::WindowsAccessibility::new())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Box::new(macos::MacAccessibility::new())
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        Box::new(tree::StubAccessibility)
-    }
+    // TODO: On Windows, return WindowsAccessibility (UIA)
+    // TODO: On macOS, return MacAccessibility (AXUIElement)
+    // For now, return stub on all platforms
+    Box::new(StubAccessibility)
 }

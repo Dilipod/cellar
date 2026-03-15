@@ -6,6 +6,8 @@ pub enum InputError {
     Unavailable,
     #[error("Input injection failed: {0}")]
     Failed(String),
+    #[error("Invalid key: {0}")]
+    InvalidKey(String),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -26,62 +28,32 @@ pub enum InputEvent {
     KeyDown { key: String },
     KeyUp { key: String },
     TypeText { text: String },
+    Scroll { dx: i32, dy: i32 },
 }
 
 /// Platform-agnostic input controller trait.
 pub trait InputController: Send + Sync {
     /// Move the mouse to absolute screen coordinates.
-    fn mouse_move(&self, x: i32, y: i32) -> Result<(), InputError>;
+    fn mouse_move(&mut self, x: i32, y: i32) -> Result<(), InputError>;
 
     /// Click at absolute screen coordinates.
-    fn click(&self, x: i32, y: i32, button: MouseButton) -> Result<(), InputError>;
+    fn click(&mut self, x: i32, y: i32, button: MouseButton) -> Result<(), InputError>;
 
     /// Double-click at absolute screen coordinates.
-    fn double_click(&self, x: i32, y: i32, button: MouseButton) -> Result<(), InputError>;
+    fn double_click(&mut self, x: i32, y: i32, button: MouseButton) -> Result<(), InputError>;
 
-    /// Type a string of text.
-    fn type_text(&self, text: &str) -> Result<(), InputError>;
+    /// Type a string of text (uses fast unicode input).
+    fn type_text(&mut self, text: &str) -> Result<(), InputError>;
 
-    /// Press a single key (e.g., "Enter", "Tab", "Escape").
-    fn key_press(&self, key: &str) -> Result<(), InputError>;
+    /// Press and release a single key (e.g., "Enter", "Tab", "Escape").
+    fn key_press(&mut self, key: &str) -> Result<(), InputError>;
 
     /// Press a key combination (e.g., ["Ctrl", "C"]).
-    fn key_combo(&self, keys: &[&str]) -> Result<(), InputError>;
+    fn key_combo(&mut self, keys: &[&str]) -> Result<(), InputError>;
 
     /// Scroll at the current mouse position.
-    fn scroll(&self, dx: i32, dy: i32) -> Result<(), InputError>;
-}
+    fn scroll(&mut self, dx: i32, dy: i32) -> Result<(), InputError>;
 
-/// Stub input controller for unsupported platforms.
-pub struct StubInput;
-
-impl InputController for StubInput {
-    fn mouse_move(&self, _x: i32, _y: i32) -> Result<(), InputError> {
-        tracing::warn!("Stub input: mouse_move");
-        Ok(())
-    }
-    fn click(&self, _x: i32, _y: i32, _button: MouseButton) -> Result<(), InputError> {
-        tracing::warn!("Stub input: click");
-        Ok(())
-    }
-    fn double_click(&self, _x: i32, _y: i32, _button: MouseButton) -> Result<(), InputError> {
-        tracing::warn!("Stub input: double_click");
-        Ok(())
-    }
-    fn type_text(&self, _text: &str) -> Result<(), InputError> {
-        tracing::warn!("Stub input: type_text");
-        Ok(())
-    }
-    fn key_press(&self, _key: &str) -> Result<(), InputError> {
-        tracing::warn!("Stub input: key_press");
-        Ok(())
-    }
-    fn key_combo(&self, _keys: &[&str]) -> Result<(), InputError> {
-        tracing::warn!("Stub input: key_combo");
-        Ok(())
-    }
-    fn scroll(&self, _dx: i32, _dy: i32) -> Result<(), InputError> {
-        tracing::warn!("Stub input: scroll");
-        Ok(())
-    }
+    /// Get the main display size.
+    fn display_size(&self) -> Result<(i32, i32), InputError>;
 }
