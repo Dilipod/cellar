@@ -2,10 +2,20 @@
 //!
 //! Embedded SQLite database for persisting agent memory, context maps,
 //! run history, confidence data, and learned knowledge.
+//!
+//! ## Architecture
+//! - **schema.rs** — Core tables, migrations, run/step tracking
+//! - **memory.rs** — Working memory, observations, knowledge with FTS5
+//! - **filesystem.rs** — Screenshot storage, JSONL run transcripts
 
+mod filesystem;
+mod memory;
+pub mod pgvector;
 mod schema;
 
-pub use schema::CelStore;
+pub use filesystem::FsStore;
+pub use memory::{Observation, ObservationPriority, WorkingMemory};
+pub use schema::{CelStore, KnowledgeFact, RunRecord, StepRecord};
 
 use thiserror::Error;
 
@@ -17,4 +27,8 @@ pub enum StoreError {
     Serialization(#[from] serde_json::Error),
     #[error("Store not initialized")]
     NotInitialized,
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Not found: {0}")]
+    NotFound(String),
 }
