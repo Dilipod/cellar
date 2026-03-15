@@ -311,6 +311,27 @@ pub fn search_knowledge(
     serde_json::to_string(&results).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+// --- Eviction / TTL ---
+
+/// Run eviction policies. Returns JSON with counts of deleted rows.
+#[napi]
+pub fn run_eviction(
+    db_path: String,
+    run_retention_days: u32,
+    knowledge_retention_days: u32,
+) -> napi::Result<String> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let config = cel_store::EvictionConfig {
+        run_retention_days,
+        knowledge_retention_days,
+    };
+    let result = store
+        .run_eviction(&config)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&result).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 /// Add a scoped knowledge fact. Returns the ID.
 #[napi]
 pub fn add_scoped_knowledge(

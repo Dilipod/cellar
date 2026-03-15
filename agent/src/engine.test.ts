@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { WorkflowEngine, type EngineCallbacks } from "./engine.js";
 import type { Workflow, ScreenContext, WorkflowStep } from "./types.js";
+import type { AssembledContext, StepResult } from "./context-assembly.js";
 
 function makeWorkflow(steps: number): Workflow {
   return {
@@ -38,10 +39,10 @@ function makeContext(confidence = 0.9): ScreenContext {
 function makeCallbacks(overrides: Partial<EngineCallbacks> = {}): EngineCallbacks {
   return {
     getContext: vi.fn(async () => makeContext()),
-    executeAction: vi.fn(async () => true),
-    onPause: vi.fn(async () => {}),
-    onStepComplete: vi.fn(),
-    onComplete: vi.fn(),
+    executeAction: vi.fn(async (_step: WorkflowStep, _ctx: AssembledContext) => true),
+    onPause: vi.fn(async (_step: WorkflowStep, _ctx: AssembledContext) => {}),
+    onStepComplete: vi.fn((_step: WorkflowStep, _idx: number, _ctx: AssembledContext) => {}),
+    onComplete: vi.fn((_wf: Workflow, _status: string, _steps: StepResult[]) => {}),
     onLog: vi.fn(),
     ...overrides,
   };
@@ -70,12 +71,12 @@ describe("WorkflowEngine", () => {
 
     expect(callbacks.executeAction).toHaveBeenCalledTimes(3);
     expect(callbacks.onStepComplete).toHaveBeenCalledTimes(3);
-    expect(callbacks.onComplete).toHaveBeenCalledWith(wf, "completed");
+    expect(callbacks.onComplete).toHaveBeenCalledWith(wf, "completed", expect.any(Array));
   });
 
   it("should stop on step failure", async () => {
     const callbacks = makeCallbacks({
-      executeAction: vi.fn(async (step: WorkflowStep) => {
+      executeAction: vi.fn(async (step: WorkflowStep, _ctx: AssembledContext) => {
         // Fail on step-1
         return step.id !== "step-1";
       }),
@@ -90,7 +91,8 @@ describe("WorkflowEngine", () => {
 
     expect(callbacks.onComplete).toHaveBeenCalledWith(
       expect.anything(),
-      "failed"
+      "failed",
+      expect.any(Array),
     );
   });
 
@@ -114,7 +116,8 @@ describe("WorkflowEngine", () => {
     );
     expect(callbacks.onComplete).toHaveBeenCalledWith(
       expect.anything(),
-      "failed"
+      "failed",
+      expect.any(Array),
     );
   });
 
@@ -149,5 +152,48 @@ describe("WorkflowEngine", () => {
     const id1 = engine.submit(makeWorkflow(1), "low");
     const id2 = engine.submit(makeWorkflow(1), "critical");
     expect(id1).not.toBe(id2);
+  });
+
+  it("should pass assembled context to callbacks", async () => {
+    let receivedContext: AssembledContext | undefined;
+    const callbacks = makeCallbacks({
+      executeAction: vi.fn(async (_step: WorkflowStep, ctx: AssembledContext) => {
+        receivedContext = ctx;
+        return true;
+      }),
+    });
+    const engine = new WorkflowEngine(callbacks);
+    engine.submit(makeWorkflow(1));
+
+    const startPromise = engine.start();
+    await new Promise((r) => setTimeout(r, 100));
+    engine.stop();
+    await startPromise;
+
+    expect(receivedContext).toBeDefined();
+    expect(receivedContext!.workflow.name).toBe("test-workflow");
+    expect(receivedContext!.screen.app).toBe("test-app");
+    expect(receivedContext!.currentStep.id).toBe("step-0");
+  });
+
+  it("should track completed steps across the run", async () => {
+    let lastSteps: StepResult[] = [];
+    const callbacks = makeCallbacks({
+      onComplete: vi.fn((_wf, _status, steps) => {
+        lastSteps = steps;
+      }),
+    });
+    const engine = new WorkflowEngine(callbacks);
+    engine.submit(makeWorkflow(3));
+
+    const startPromise = engine.start();
+    await new Promise((r) => setTimeout(r, 100));
+    engine.stop();
+    await startPromise;
+
+    expect(lastSteps).toHaveLength(3);
+    expect(lastSteps[0].stepId).toBe("step-0");
+    expect(lastSteps[0].success).toBe(true);
+    expect(lastSteps[2].stepIndex).toBe(2);
   });
 });

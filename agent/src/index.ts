@@ -1,4 +1,4 @@
-export { WorkflowEngine, type EngineCallbacks } from "./engine.js";
+export { WorkflowEngine, type EngineCallbacks, type EngineOptions } from "./engine.js";
 export { WorkflowQueue, type QueueEntry } from "./queue.js";
 export {
   Cel,
@@ -10,6 +10,7 @@ export {
   type StepRecord,
   type ObservationRecord,
   type ScoredKnowledgeRecord,
+  type EvictionResult,
 } from "./cel-bindings.js";
 export { executeAction } from "./action-executor.js";
 export {
@@ -21,6 +22,15 @@ export {
   type StepResult,
   type ContextAssemblyConfig,
 } from "./context-assembly.js";
+export {
+  RunTranscript,
+  type TranscriptEntry,
+  type TranscriptEntryType,
+} from "./transcript.js";
+export {
+  processPostRun,
+  type PostRunResult,
+} from "./post-run.js";
 export {
   saveWorkflow,
   loadWorkflow,

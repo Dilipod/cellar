@@ -14,7 +14,7 @@ pub mod pgvector;
 mod schema;
 
 pub use filesystem::FsStore;
-pub use memory::{Observation, ObservationPriority, WorkingMemory};
+pub use memory::{EvictionConfig, EvictionResult, Observation, ObservationPriority, WorkingMemory};
 pub use schema::{CelStore, KnowledgeFact, RunRecord, StepRecord};
 
 use thiserror::Error;
