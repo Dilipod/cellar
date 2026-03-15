@@ -40,6 +40,15 @@ export interface CelNative {
   ): number;
   getRunHistory(dbPath: string, limit: number): string;
   getStepResults(dbPath: string, runId: number): string;
+  // Memory: Working Memory
+  getWorkingMemory(dbPath: string, workflowName: string): string;
+  updateWorkingMemory(dbPath: string, workflowName: string, content: string): void;
+  // Memory: Observations
+  addObservation(dbPath: string, workflowName: string, content: string, priority: string, sourceRunIds: number[]): number;
+  getObservations(dbPath: string, workflowName: string, limit: number): string;
+  // Memory: Knowledge FTS5
+  searchKnowledge(dbPath: string, query: string, workflowScope: string | null, limit: number): string;
+  addScopedKnowledge(dbPath: string, content: string, source: string, workflowScope: string | null, tags: string | null): number;
 }
 
 /** Monitor info from CEL display layer. */
@@ -83,6 +92,29 @@ export interface RunRecord {
   steps_completed: number;
   steps_total: number;
   interventions: number;
+}
+
+/** Observation from CEL Store. */
+export interface ObservationRecord {
+  id: number;
+  workflow_name: string;
+  content: string;
+  priority: "high" | "medium" | "low";
+  source_run_ids: string;
+  observed_at: string;
+  referenced_at: string | null;
+  superseded_by: number | null;
+  created_at: string;
+}
+
+/** Scored knowledge from FTS5 search. */
+export interface ScoredKnowledgeRecord {
+  id: number;
+  content: string;
+  source: string;
+  workflow_scope: string | null;
+  score: number;
+  created_at: string;
 }
 
 /** Step result record from CEL Store. */
@@ -270,5 +302,61 @@ export class Cel {
   getStepResults(runId: number): StepRecord[] {
     if (!this.native) return [];
     return JSON.parse(this.native.getStepResults(this.dbPath, runId));
+  }
+
+  // --- Working Memory ---
+
+  /** Get working memory content for a workflow. */
+  getWorkingMemory(workflowName: string): string {
+    if (!this.native) return "";
+    const wm = JSON.parse(this.native.getWorkingMemory(this.dbPath, workflowName));
+    return wm.content ?? "";
+  }
+
+  /** Update working memory for a workflow. */
+  updateWorkingMemory(workflowName: string, content: string): void {
+    this.native?.updateWorkingMemory(this.dbPath, workflowName, content);
+  }
+
+  // --- Observations ---
+
+  /** Add an observation from past runs. */
+  addObservation(
+    workflowName: string,
+    content: string,
+    priority: "high" | "medium" | "low",
+    sourceRunIds: number[],
+  ): number {
+    if (!this.native) return -1;
+    return this.native.addObservation(this.dbPath, workflowName, content, priority, sourceRunIds);
+  }
+
+  /** Get active observations for a workflow. */
+  getObservations(workflowName: string, limit = 50): ObservationRecord[] {
+    if (!this.native) return [];
+    return JSON.parse(this.native.getObservations(this.dbPath, workflowName, limit));
+  }
+
+  // --- Knowledge FTS5 ---
+
+  /** Search knowledge using FTS5 full-text search. */
+  searchKnowledge(query: string, workflowScope?: string, limit = 5): ScoredKnowledgeRecord[] {
+    if (!this.native) return [];
+    return JSON.parse(
+      this.native.searchKnowledge(this.dbPath, query, workflowScope ?? null, limit),
+    );
+  }
+
+  /** Add a scoped knowledge fact. */
+  addScopedKnowledge(
+    content: string,
+    source: string,
+    workflowScope?: string,
+    tags?: string,
+  ): number {
+    if (!this.native) return -1;
+    return this.native.addScopedKnowledge(
+      this.dbPath, content, source, workflowScope ?? null, tags ?? null,
+    );
   }
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// The main CEL Store handle.
 pub struct CelStore {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 /// A fact stored in the agent knowledge layer.
@@ -145,6 +145,10 @@ impl CelStore {
             );
             ",
         )?;
+
+        // Memory subsystem tables (FTS5, working memory, observations)
+        crate::memory::migrate_memory(&self.conn)?;
+
         Ok(())
     }
 

@@ -227,3 +227,102 @@ pub fn get_step_results(db_path: String, run_id: i64) -> napi::Result<String> {
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     serde_json::to_string(&steps).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
+
+// --- Memory: Working Memory ---
+
+/// Get working memory for a workflow. Returns JSON string.
+#[napi]
+pub fn get_working_memory(db_path: String, workflow_name: String) -> napi::Result<String> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let wm = store
+        .get_working_memory(&workflow_name)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&wm).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Update working memory for a workflow.
+#[napi]
+pub fn update_working_memory(
+    db_path: String,
+    workflow_name: String,
+    content: String,
+) -> napi::Result<()> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    store
+        .update_working_memory(&workflow_name, &content)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// --- Memory: Observations ---
+
+/// Add an observation. Returns the observation ID.
+#[napi]
+pub fn add_observation(
+    db_path: String,
+    workflow_name: String,
+    content: String,
+    priority: String,
+    source_run_ids: Vec<i64>,
+) -> napi::Result<i64> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let p = match priority.as_str() {
+        "high" => cel_store::ObservationPriority::High,
+        "low" => cel_store::ObservationPriority::Low,
+        _ => cel_store::ObservationPriority::Medium,
+    };
+    store
+        .add_observation(&workflow_name, &content, &p, &source_run_ids, None, None)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Get active observations for a workflow. Returns JSON string.
+#[napi]
+pub fn get_observations(
+    db_path: String,
+    workflow_name: String,
+    limit: u32,
+) -> napi::Result<String> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let obs = store
+        .get_observations(&workflow_name, limit)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&obs).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// --- Memory: Knowledge FTS5 Search ---
+
+/// Search knowledge using FTS5 full-text search. Returns JSON string.
+#[napi]
+pub fn search_knowledge(
+    db_path: String,
+    query: String,
+    workflow_scope: Option<String>,
+    limit: u32,
+) -> napi::Result<String> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let results = store
+        .search_knowledge(&query, workflow_scope.as_deref(), limit)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    serde_json::to_string(&results).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Add a scoped knowledge fact. Returns the ID.
+#[napi]
+pub fn add_scoped_knowledge(
+    db_path: String,
+    content: String,
+    source: String,
+    workflow_scope: Option<String>,
+    tags: Option<String>,
+) -> napi::Result<i64> {
+    let store =
+        cel_store::CelStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    store
+        .add_scoped_knowledge(&content, &source, workflow_scope.as_deref(), tags.as_deref())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
