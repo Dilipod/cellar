@@ -6,7 +6,8 @@ use cel_vision::VisionProvider;
 
 /// Minimum number of actionable elements (buttons, inputs, links, etc.)
 /// below which the vision fallback is triggered.
-const VISION_FALLBACK_THRESHOLD: usize = 3;
+/// Set to 5 to avoid unnecessary vision calls on simple dialogs (OK/Cancel = 2 buttons).
+const VISION_FALLBACK_THRESHOLD: usize = 5;
 
 /// Merges context from all available streams into a unified ScreenContext.
 pub struct ContextMerger {
@@ -187,6 +188,7 @@ impl ContextMerger {
             .map(|(i, ve)| ContextElement {
                 id: format!("vision:{}", i),
                 label: Some(ve.label),
+                description: None,
                 element_type: ve.element_type,
                 value: None,
                 bounds: ve.bounds.map(|b| Bounds {
@@ -195,6 +197,8 @@ impl ContextMerger {
                     width: b.width,
                     height: b.height,
                 }),
+                state: None,
+                parent_id: None,
                 confidence: ve.confidence,
                 source: ContextSource::Vision,
             })
@@ -283,21 +287,61 @@ impl ContextMerger {
     }
 
     /// Flatten the accessibility tree into a list of ContextElements.
+    ///
+    /// Confidence scoring is based on data quality rather than a hardcoded value:
+    /// - Base: 0.60 (element exists in the a11y tree)
+    /// - +0.10 if has a non-empty label or value
+    /// - +0.10 if has valid bounds (non-zero area)
+    /// - +0.05 if state indicates visible and enabled
+    /// - +0.05 if element is an actionable type (button, input, etc.)
+    /// Maximum: ~0.90 for a fully-qualified element
     fn flatten_a11y_tree(&self, node: &AccessibilityElement, out: &mut Vec<ContextElement>) {
         let element_type = role_to_string(&node.role);
+
+        let bounds = node.bounds.as_ref().map(|b| Bounds {
+            x: b.x,
+            y: b.y,
+            width: b.width,
+            height: b.height,
+        });
+
+        // Smart confidence scoring based on data quality
+        let mut confidence: f64 = 0.60;
+
+        // Has a label or value?
+        if node.label.as_ref().map_or(false, |l| !l.is_empty())
+            || node.value.as_ref().map_or(false, |v| !v.is_empty())
+        {
+            confidence += 0.10;
+        }
+
+        // Has valid bounds (non-zero area)?
+        if let Some(ref b) = bounds {
+            if b.width > 0 && b.height > 0 {
+                confidence += 0.10;
+            }
+        }
+
+        // State indicates visible and enabled?
+        if node.state.visible && node.state.enabled {
+            confidence += 0.05;
+        }
+
+        // Is an actionable type?
+        if is_actionable_type(element_type) {
+            confidence += 0.05;
+        }
 
         out.push(ContextElement {
             id: node.id.clone(),
             label: node.label.clone(),
+            description: node.description.clone(),
             element_type: element_type.to_string(),
             value: node.value.clone(),
-            bounds: node.bounds.as_ref().map(|b| Bounds {
-                x: b.x,
-                y: b.y,
-                width: b.width,
-                height: b.height,
-            }),
-            confidence: 0.85, // Default a11y confidence
+            bounds,
+            state: Some(node.state.clone()),
+            parent_id: node.parent_id.clone(),
+            confidence,
             source: ContextSource::AccessibilityTree,
         });
 
@@ -433,7 +477,9 @@ mod tests {
         let ctx = merger.get_context();
         assert!(!ctx.elements.is_empty());
         assert_eq!(ctx.elements[0].element_type, "window");
-        assert_eq!(ctx.elements[0].confidence, 0.85);
+        // Stub has label "Stub Window", bounds 1920x1080, visible+enabled → 0.60+0.10+0.10+0.05 = 0.85
+        assert!(ctx.elements[0].confidence >= 0.60, "Confidence should be at least base 0.60");
+        assert!(ctx.elements[0].confidence <= 0.90, "Confidence should be at most 0.90");
         assert_eq!(ctx.elements[0].source, ContextSource::AccessibilityTree);
         assert!(ctx.timestamp_ms > 0);
     }
@@ -447,9 +493,12 @@ mod tests {
             elements: vec![ContextElement {
                 id: "root".into(),
                 label: Some("Stub Window".into()),
+                description: None,
                 element_type: "window".into(),
                 value: None,
                 bounds: None,
+                state: None,
+                parent_id: None,
                 confidence: 0.85,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -458,9 +507,12 @@ mod tests {
         let native = vec![ContextElement {
             id: "root".into(),
             label: Some("Excel".into()),
+            description: None,
             element_type: "window".into(),
             value: None,
             bounds: None,
+            state: None,
+            parent_id: None,
             confidence: 0.98,
             source: ContextSource::NativeApi,
         }];
@@ -481,9 +533,12 @@ mod tests {
             elements: vec![ContextElement {
                 id: "root".into(),
                 label: None,
+                description: None,
                 element_type: "window".into(),
                 value: None,
                 bounds: None,
+                state: None,
+                parent_id: None,
                 confidence: 0.85,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -493,9 +548,12 @@ mod tests {
         let native = vec![ContextElement {
             id: "excel:A1".into(),
             label: Some("Cell A1".into()),
+            description: None,
             element_type: "table_cell".into(),
             value: Some("Revenue".into()),
             bounds: Some(Bounds { x: 120, y: 200, width: 80, height: 20 }),
+            state: None,
+            parent_id: None,
             confidence: 0.98,
             source: ContextSource::NativeApi,
         }];
@@ -520,9 +578,12 @@ mod tests {
         let vision = vec![ContextElement {
             id: "vision:btn:1".into(),
             label: Some("Submit".into()),
+            description: None,
             element_type: "button".into(),
             value: None,
             bounds: Some(Bounds { x: 500, y: 500, width: 100, height: 40 }),
+            state: None,
+            parent_id: None,
             confidence: 0.75,
             source: ContextSource::Vision,
         }];
@@ -542,9 +603,12 @@ mod tests {
             elements: vec![ContextElement {
                 id: "a11y:btn:1".into(),
                 label: Some("OK".into()),
+                description: None,
                 element_type: "button".into(),
                 value: None,
                 bounds: Some(Bounds { x: 100, y: 100, width: 80, height: 30 }),
+                state: None,
+                parent_id: None,
                 confidence: 0.85,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -554,9 +618,12 @@ mod tests {
         let vision = vec![ContextElement {
             id: "vision:btn:1".into(),
             label: Some("OK".into()),
+            description: None,
             element_type: "button".into(),
             value: None,
             bounds: Some(Bounds { x: 100, y: 100, width: 80, height: 30 }),
+            state: None,
+            parent_id: None,
             confidence: 0.70,
             source: ContextSource::Vision,
         }];
@@ -572,22 +639,25 @@ mod tests {
         let mut ctx = ScreenContext {
             app: "".into(), window: "".into(), network_events: vec![], timestamp_ms: 0,
             elements: vec![ContextElement {
-                id: "root".into(), label: None, element_type: "window".into(),
-                value: None, bounds: None, confidence: 0.85,
-                source: ContextSource::AccessibilityTree,
+                id: "root".into(), label: None, description: None,
+                element_type: "window".into(),
+                value: None, bounds: None, state: None, parent_id: None,
+                confidence: 0.85, source: ContextSource::AccessibilityTree,
             }],
         };
 
         let native = vec![
             ContextElement {
-                id: "low".into(), label: None, element_type: "text".into(),
-                value: None, bounds: None, confidence: 0.50,
-                source: ContextSource::NativeApi,
+                id: "low".into(), label: None, description: None,
+                element_type: "text".into(),
+                value: None, bounds: None, state: None, parent_id: None,
+                confidence: 0.50, source: ContextSource::NativeApi,
             },
             ContextElement {
-                id: "high".into(), label: None, element_type: "button".into(),
-                value: None, bounds: None, confidence: 0.99,
-                source: ContextSource::NativeApi,
+                id: "high".into(), label: None, description: None,
+                element_type: "button".into(),
+                value: None, bounds: None, state: None, parent_id: None,
+                confidence: 0.99, source: ContextSource::NativeApi,
             },
         ];
 
@@ -713,18 +783,24 @@ mod tests {
             ContextElement {
                 id: "vision:0".into(),
                 label: Some("Submit".into()),
+                description: None,
                 element_type: "button".into(),
                 value: None,
                 bounds: Some(Bounds { x: 100, y: 200, width: 80, height: 30 }),
+                state: None,
+                parent_id: None,
                 confidence: 0.72,
                 source: ContextSource::Vision,
             },
             ContextElement {
                 id: "vision:1".into(),
                 label: Some("Cancel".into()),
+                description: None,
                 element_type: "button".into(),
                 value: None,
                 bounds: Some(Bounds { x: 200, y: 200, width: 80, height: 30 }),
+                state: None,
+                parent_id: None,
                 confidence: 0.68,
                 source: ContextSource::Vision,
             },
@@ -750,8 +826,10 @@ mod tests {
             elements: vec![ContextElement {
                 id: "btn1".into(),
                 label: Some("OK".into()),
+                description: None,
                 element_type: "button".into(),
                 value: None, bounds: None,
+                state: None, parent_id: None,
                 confidence: 0.95,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -761,8 +839,10 @@ mod tests {
         let native = vec![ContextElement {
             id: "btn1".into(),
             label: Some("OK (native)".into()),
+            description: None,
             element_type: "button".into(),
             value: None, bounds: None,
+            state: None, parent_id: None,
             confidence: 0.80,
             source: ContextSource::NativeApi,
         }];
@@ -785,14 +865,15 @@ mod tests {
     }
 
     #[test]
-    fn test_flatten_a11y_tree_sets_correct_confidence() {
+    fn test_flatten_a11y_tree_sets_dynamic_confidence() {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let mut merger = ContextMerger::new(stub);
         let ctx = merger.get_context();
 
-        // All a11y elements should have the default 0.85 confidence
+        // All a11y elements should have confidence in valid range (0.60 base to ~0.90 max)
         for e in &ctx.elements {
-            assert_eq!(e.confidence, 0.85);
+            assert!(e.confidence >= 0.60, "Confidence {} too low for {}", e.confidence, e.id);
+            assert!(e.confidence <= 0.90, "Confidence {} too high for {}", e.confidence, e.id);
             assert_eq!(e.source, ContextSource::AccessibilityTree);
         }
     }

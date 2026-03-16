@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// Re-export Bounds from the accessibility crate — single source of truth.
+/// Re-export Bounds and ElementState from the accessibility crate — single source of truth.
 pub use cel_accessibility::Bounds;
+pub use cel_accessibility::ElementState;
 
 /// The source that provided a context element.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -23,12 +24,18 @@ pub struct ContextElement {
     pub id: String,
     /// Human-readable label.
     pub label: Option<String>,
+    /// Accessibility description (tooltip / secondary label).
+    pub description: Option<String>,
     /// Element type (button, input, text, etc.).
     pub element_type: String,
     /// Current value (for inputs, dropdowns, etc.).
     pub value: Option<String>,
     /// Screen-space bounding rectangle.
     pub bounds: Option<Bounds>,
+    /// Current state flags (from accessibility tree).
+    pub state: Option<ElementState>,
+    /// ID of the parent element (None for root elements).
+    pub parent_id: Option<String>,
     /// Confidence score (0.0 - 1.0).
     pub confidence: f64,
     /// Which context source provided this element.

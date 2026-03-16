@@ -147,6 +147,8 @@ mod tests {
                 focused: false, enabled: true, visible: true,
                 selected: false, expanded: None, checked: None,
             },
+            description: None,
+            parent_id: None,
             children: vec![],
         };
         let parent = AccessibilityElement {
@@ -159,6 +161,8 @@ mod tests {
                 focused: true, enabled: true, visible: true,
                 selected: false, expanded: None, checked: None,
             },
+            description: None,
+            parent_id: None,
             children: vec![child],
         };
         assert_eq!(parent.children.len(), 1);
@@ -178,6 +182,8 @@ mod tests {
                 focused: true, enabled: true, visible: true,
                 selected: false, expanded: None, checked: None,
             },
+            description: None,
+            parent_id: None,
             children: vec![],
         };
         let json = serde_json::to_string(&elem).unwrap();
