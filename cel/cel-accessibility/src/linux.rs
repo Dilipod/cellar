@@ -1,66 +1,110 @@
-//! Linux accessibility via AT-SPI2 over D-Bus.
+//! Linux accessibility via AT-SPI2 over D-Bus using zbus.
 //!
-//! Uses synchronous D-Bus calls to query the accessibility tree via the
-//! org.a]1y.atspi.Accessible interface. Falls back to StubAccessibility
+//! Uses zbus blocking API to query the accessibility tree via the
+//! org.a11y.atspi.Accessible interface. Falls back to StubAccessibility
 //! if the AT-SPI2 registry is not running.
 
 use crate::tree::{
     AccessibilityElement, AccessibilityError, AccessibilityTree, Bounds, ElementRole, ElementState,
 };
-use std::process::Command;
+use zbus::blocking::Connection;
+use zbus::zvariant::OwnedValue;
 
-/// Linux accessibility provider using AT-SPI2 D-Bus interface.
+/// Linux accessibility provider using AT-SPI2 D-Bus interface via zbus.
 pub struct LinuxAccessibility {
-    /// Whether AT-SPI2 daemon is reachable.
-    available: bool,
+    conn: Connection,
 }
 
 impl LinuxAccessibility {
     /// Create a new Linux accessibility provider.
     /// Checks if AT-SPI2 registry is running on the session bus.
     pub fn new() -> Result<Self, AccessibilityError> {
-        // Check if AT-SPI2 registry is accessible on the D-Bus session bus
-        let available = check_atspi_available();
-        if !available {
+        let conn = Connection::session()
+            .map_err(|e| AccessibilityError::QueryFailed(format!("D-Bus session: {}", e)))?;
+
+        // Verify AT-SPI2 registry is reachable
+        let proxy = zbus::blocking::fdo::DBusProxy::new(&conn)
+            .map_err(|e| AccessibilityError::QueryFailed(format!("D-Bus proxy: {}", e)))?;
+        let names = proxy
+            .list_names()
+            .map_err(|e| AccessibilityError::QueryFailed(format!("List names: {}", e)))?;
+
+        let has_atspi = names
+            .iter()
+            .any(|n| n.as_str() == "org.a11y.atspi.Registry");
+        if !has_atspi {
             return Err(AccessibilityError::Unavailable);
         }
-        Ok(Self { available })
+
+        Ok(Self { conn })
+    }
+
+    /// Query the Name property of an accessible object.
+    fn get_name(&self, dest: &str, path: &str) -> Option<String> {
+        let proxy = zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Accessible",
+        )
+        .ok()?;
+        let value: OwnedValue = proxy.get_property("Name").ok()?;
+        let name: &str = value.downcast_ref().ok()?;
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    }
+
+    /// Get children of an accessible object as (bus_name, object_path) pairs.
+    fn get_children(&self, dest: &str, path: &str) -> Vec<(String, String)> {
+        let proxy = match zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Accessible",
+        ) {
+            Ok(p) => p,
+            Err(_) => return vec![],
+        };
+
+        // GetChildren returns array of (bus_name, object_path) structs
+        let result: Result<Vec<(String, String)>, _> = proxy.call("GetChildren", &());
+        result.unwrap_or_default()
     }
 }
 
 impl AccessibilityTree for LinuxAccessibility {
     fn get_tree(&self) -> Result<AccessibilityElement, AccessibilityError> {
-        if !self.available {
-            return Err(AccessibilityError::Unavailable);
+        let children_refs =
+            self.get_children("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root");
+
+        let mut children = Vec::new();
+        for (idx, (bus_name, _obj_path)) in children_refs.iter().enumerate() {
+            let app_name = self
+                .get_name(bus_name, "/org/a11y/atspi/accessible/root")
+                .unwrap_or_else(|| format!("app-{}", idx));
+
+            children.push(AccessibilityElement {
+                id: format!("app-{}", idx),
+                role: ElementRole::Window,
+                label: Some(app_name),
+                value: None,
+                bounds: None,
+                state: ElementState {
+                    focused: idx == 0,
+                    enabled: true,
+                    visible: true,
+                    selected: false,
+                    expanded: None,
+                    checked: None,
+                },
+                children: vec![],
+            });
         }
 
-        // Query AT-SPI2 via gdbus for the active application's accessibility tree
-        let output = Command::new("gdbus")
-            .args([
-                "call",
-                "--session",
-                "--dest=org.a11y.atspi.Registry",
-                "--object-path=/org/a11y/atspi/accessible/root",
-                "--method=org.a11y.atspi.Accessible.GetChildren",
-            ])
-            .output();
-
-        match output {
-            Ok(out) if out.status.success() => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                parse_atspi_children(&stdout)
-            }
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                tracing::debug!("AT-SPI2 query returned error: {}", stderr);
-                // Return a basic root even if the detailed tree fails
-                Ok(make_root_element(vec![]))
-            }
-            Err(e) => {
-                tracing::debug!("Failed to call gdbus: {}", e);
-                Ok(make_root_element(vec![]))
-            }
-        }
+        Ok(make_root_element(children))
     }
 
     fn find_elements(
@@ -75,146 +119,31 @@ impl AccessibilityTree for LinuxAccessibility {
     }
 
     fn focused_element(&self) -> Result<Option<AccessibilityElement>, AccessibilityError> {
-        if !self.available {
-            return Ok(None);
-        }
+        let name = self.get_name(
+            "org.a11y.atspi.Registry",
+            "/org/a11y/atspi/accessible/root",
+        );
 
-        // Query the focused element via AT-SPI2
-        let output = Command::new("gdbus")
-            .args([
-                "call",
-                "--session",
-                "--dest=org.a11y.atspi.Registry",
-                "--object-path=/org/a11y/atspi/accessible/root",
-                "--method=org.freedesktop.DBus.Properties.Get",
-                "org.a11y.atspi.Accessible",
-                "Name",
-            ])
-            .output();
-
-        match output {
-            Ok(out) if out.status.success() => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let name = extract_dbus_string(&stdout);
-                if name.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(AccessibilityElement {
-                        id: "focused".into(),
-                        role: ElementRole::Window,
-                        label: Some(name),
-                        value: None,
-                        bounds: None,
-                        state: ElementState {
-                            focused: true,
-                            enabled: true,
-                            visible: true,
-                            selected: false,
-                            expanded: None,
-                            checked: None,
-                        },
-                        children: vec![],
-                    }))
-                }
-            }
+        match name {
+            Some(n) if !n.is_empty() => Ok(Some(AccessibilityElement {
+                id: "focused".into(),
+                role: ElementRole::Window,
+                label: Some(n),
+                value: None,
+                bounds: None,
+                state: ElementState {
+                    focused: true,
+                    enabled: true,
+                    visible: true,
+                    selected: false,
+                    expanded: None,
+                    checked: None,
+                },
+                children: vec![],
+            })),
             _ => Ok(None),
         }
     }
-}
-
-/// Check if AT-SPI2 registry is reachable on the session bus.
-fn check_atspi_available() -> bool {
-    let output = Command::new("gdbus")
-        .args([
-            "introspect",
-            "--session",
-            "--dest=org.a11y.atspi.Registry",
-            "--object-path=/org/a11y/atspi/accessible/root",
-        ])
-        .output();
-
-    match output {
-        Ok(out) => out.status.success(),
-        Err(_) => false,
-    }
-}
-
-/// Parse AT-SPI2 children response into accessibility elements.
-fn parse_atspi_children(output: &str) -> Result<AccessibilityElement, AccessibilityError> {
-    // gdbus output format: ([(':1.123', '/org/a11y/atspi/accessible/1'), ...],)
-    // Parse app names from the bus connections
-    let mut children = Vec::new();
-    let mut idx = 0;
-
-    // Extract bus-name/path pairs
-    for segment in output.split("('") {
-        if segment.contains("atspi") || segment.contains(':') {
-            // Try to get the app name for this accessible
-            let bus_name: String = segment
-                .chars()
-                .take_while(|c| *c != '\'')
-                .collect();
-
-            if bus_name.starts_with(':') {
-                let app_name = query_app_name(&bus_name).unwrap_or_else(|| format!("app-{}", idx));
-                children.push(AccessibilityElement {
-                    id: format!("app-{}", idx),
-                    role: ElementRole::Window,
-                    label: Some(app_name),
-                    value: None,
-                    bounds: None,
-                    state: ElementState {
-                        focused: idx == 0, // First app is assumed focused
-                        enabled: true,
-                        visible: true,
-                        selected: false,
-                        expanded: None,
-                        checked: None,
-                    },
-                    children: vec![],
-                });
-                idx += 1;
-            }
-        }
-    }
-
-    Ok(make_root_element(children))
-}
-
-/// Query the application name from its AT-SPI2 bus name.
-fn query_app_name(bus_name: &str) -> Option<String> {
-    let output = Command::new("gdbus")
-        .args([
-            "call",
-            "--session",
-            &format!("--dest={}", bus_name),
-            "--object-path=/org/a11y/atspi/accessible/root",
-            "--method=org.freedesktop.DBus.Properties.Get",
-            "org.a11y.atspi.Accessible",
-            "Name",
-        ])
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let name = extract_dbus_string(&stdout);
-        if name.is_empty() { None } else { Some(name) }
-    } else {
-        None
-    }
-}
-
-/// Extract a string from D-Bus variant format: (<'string value'>,)
-fn extract_dbus_string(output: &str) -> String {
-    // Format: (<'some string'>,) or (<<'some string'>>,)
-    let trimmed = output.trim();
-    if let Some(start) = trimmed.find('\'') {
-        if let Some(end) = trimmed[start + 1..].find('\'') {
-            return trimmed[start + 1..start + 1 + end].to_string();
-        }
-    }
-    String::new()
 }
 
 /// Build the root element with children.
@@ -224,7 +153,12 @@ fn make_root_element(children: Vec<AccessibilityElement>) -> AccessibilityElemen
         role: ElementRole::Window,
         label: Some("Desktop".into()),
         value: None,
-        bounds: Some(Bounds { x: 0, y: 0, width: 1920, height: 1080 }),
+        bounds: Some(Bounds {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }),
         state: ElementState {
             focused: true,
             enabled: true,
@@ -265,13 +199,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_dbus_string() {
-        assert_eq!(extract_dbus_string("(<'Firefox'>,)"), "Firefox");
-        assert_eq!(extract_dbus_string("(<'My App Name'>,)"), "My App Name");
-        assert_eq!(extract_dbus_string("()"), "");
-    }
-
-    #[test]
     fn test_make_root_element() {
         let root = make_root_element(vec![]);
         assert_eq!(root.id, "root");
@@ -287,8 +214,12 @@ mod tests {
             value: None,
             bounds: None,
             state: ElementState {
-                focused: true, enabled: true, visible: true,
-                selected: false, expanded: None, checked: None,
+                focused: true,
+                enabled: true,
+                visible: true,
+                selected: false,
+                expanded: None,
+                checked: None,
             },
             children: vec![],
         };
@@ -306,8 +237,12 @@ mod tests {
             value: None,
             bounds: None,
             state: ElementState {
-                focused: true, enabled: true, visible: true,
-                selected: false, expanded: None, checked: None,
+                focused: true,
+                enabled: true,
+                visible: true,
+                selected: false,
+                expanded: None,
+                checked: None,
             },
             children: vec![
                 AccessibilityElement {
@@ -317,8 +252,12 @@ mod tests {
                     value: None,
                     bounds: None,
                     state: ElementState {
-                        focused: false, enabled: true, visible: true,
-                        selected: false, expanded: None, checked: None,
+                        focused: false,
+                        enabled: true,
+                        visible: true,
+                        selected: false,
+                        expanded: None,
+                        checked: None,
                     },
                     children: vec![],
                 },
@@ -329,8 +268,12 @@ mod tests {
                     value: None,
                     bounds: None,
                     state: ElementState {
-                        focused: false, enabled: true, visible: true,
-                        selected: false, expanded: None, checked: None,
+                        focused: false,
+                        enabled: true,
+                        visible: true,
+                        selected: false,
+                        expanded: None,
+                        checked: None,
                     },
                     children: vec![],
                 },
@@ -345,20 +288,22 @@ mod tests {
 
     #[test]
     fn test_collect_matching_by_label() {
-        let tree = make_root_element(vec![
-            AccessibilityElement {
-                id: "btn-1".into(),
-                role: ElementRole::Button,
-                label: Some("Submit Form".into()),
-                value: None,
-                bounds: None,
-                state: ElementState {
-                    focused: false, enabled: true, visible: true,
-                    selected: false, expanded: None, checked: None,
-                },
-                children: vec![],
+        let tree = make_root_element(vec![AccessibilityElement {
+            id: "btn-1".into(),
+            role: ElementRole::Button,
+            label: Some("Submit Form".into()),
+            value: None,
+            bounds: None,
+            state: ElementState {
+                focused: false,
+                enabled: true,
+                visible: true,
+                selected: false,
+                expanded: None,
+                checked: None,
             },
-        ]);
+            children: vec![],
+        }]);
 
         let mut results = Vec::new();
         collect_matching(&tree, None, Some("Submit"), &mut results);

@@ -61,8 +61,49 @@ impl CelStore {
         Ok(store)
     }
 
-    /// Run database migrations.
+    /// Current schema version.
+    const SCHEMA_VERSION: u32 = 1;
+
+    /// Run database migrations with version tracking.
     fn migrate(&self) -> Result<(), StoreError> {
+        // Create migration tracking table
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT DEFAULT (datetime('now'))
+            );",
+        )?;
+
+        let current: u32 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if current >= Self::SCHEMA_VERSION {
+            return Ok(());
+        }
+
+        // Version 1: initial schema
+        if current < 1 {
+            self.migrate_v1()?;
+            self.conn.execute(
+                "INSERT INTO schema_migrations (version) VALUES (?1)",
+                rusqlite::params![1],
+            )?;
+        }
+
+        // Future migrations go here:
+        // if current < 2 { self.migrate_v2()?; ... }
+
+        Ok(())
+    }
+
+    /// Version 1: initial schema.
+    fn migrate_v1(&self) -> Result<(), StoreError> {
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS context_maps (

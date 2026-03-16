@@ -58,6 +58,7 @@ fn test_screen_context_serialization() {
                 source: ContextSource::Vision,
             },
         ],
+        network_events: vec![],
         timestamp_ms: 1700000000000,
     };
 

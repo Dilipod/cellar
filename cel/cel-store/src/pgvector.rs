@@ -1,19 +1,21 @@
-//! PostgreSQL + pgvector backend for scalable deployments.
+//! PostgreSQL + pgvector schema and query definitions for scalable deployments.
 //!
-//! This module provides the same storage interface as the SQLite-based CelStore
-//! but backed by PostgreSQL with pgvector for vector similarity search.
+//! **Status: schema-only.** This module provides migration SQL and hybrid
+//! search queries for a future PostgreSQL backend. It does NOT include a
+//! connection pool or runtime implementation yet — use [`CelStore`] (SQLite)
+//! for all current workloads.
 //!
-//! ## When to use
+//! ## When to use (future)
 //! - Multi-tenant / enterprise deployments
 //! - When you need horizontal scaling
 //! - When you want vector embeddings for semantic knowledge search
 //! - When you need concurrent access from multiple agents
 //!
 //! ## Architecture
-//! SQLite (default) → good for single-user, local, zero-ops
-//! PostgreSQL + pgvector → good for production, multi-tenant, team deployments
+//! SQLite (default, implemented) → good for single-user, local, zero-ops
+//! PostgreSQL + pgvector (planned) → good for production, multi-tenant, team deployments
 //!
-//! ## Setup
+//! ## Setup (when implemented)
 //! 1. Install PostgreSQL with pgvector extension
 //! 2. Set `DATABASE_URL` environment variable
 //! 3. Enable the `pgvector` feature: `cargo build -p cel-store --features pgvector`

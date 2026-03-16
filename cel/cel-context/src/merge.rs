@@ -94,6 +94,7 @@ impl ContextMerger {
             app,
             window,
             elements,
+            network_events: self.recent_network.clone(),
             timestamp_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -222,10 +223,10 @@ fn role_to_string(role: &ElementRole) -> &str {
 
 /// Compute intersection-over-union of two bounding boxes.
 fn bounds_overlap(a: &Bounds, b: &Bounds) -> f64 {
-    let ax2 = a.x + a.width as i32;
-    let ay2 = a.y + a.height as i32;
-    let bx2 = b.x + b.width as i32;
-    let by2 = b.y + b.height as i32;
+    let ax2 = a.x.saturating_add(a.width as i32);
+    let ay2 = a.y.saturating_add(a.height as i32);
+    let bx2 = b.x.saturating_add(b.width as i32);
+    let by2 = b.y.saturating_add(b.height as i32);
 
     let ix1 = a.x.max(b.x);
     let iy1 = a.y.max(b.y);
@@ -306,7 +307,7 @@ mod tests {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let merger = ContextMerger::new(stub);
         let mut ctx = ScreenContext {
-            app: "".into(), window: "".into(), timestamp_ms: 0,
+            app: "".into(), window: "".into(), network_events: vec![], timestamp_ms: 0,
             elements: vec![ContextElement {
                 id: "root".into(),
                 label: Some("Stub Window".into()),
@@ -340,7 +341,7 @@ mod tests {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let merger = ContextMerger::new(stub);
         let mut ctx = ScreenContext {
-            app: "".into(), window: "".into(), timestamp_ms: 0,
+            app: "".into(), window: "".into(), network_events: vec![], timestamp_ms: 0,
             elements: vec![ContextElement {
                 id: "root".into(),
                 label: None,
@@ -375,6 +376,7 @@ mod tests {
         let mut ctx = ScreenContext {
             app: "test".into(),
             window: "test".into(),
+            network_events: vec![],
             elements: vec![],
             timestamp_ms: 0,
         };
@@ -400,6 +402,7 @@ mod tests {
         let mut ctx = ScreenContext {
             app: "test".into(),
             window: "test".into(),
+            network_events: vec![],
             elements: vec![ContextElement {
                 id: "a11y:btn:1".into(),
                 label: Some("OK".into()),
@@ -431,7 +434,7 @@ mod tests {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let merger = ContextMerger::new(stub);
         let mut ctx = ScreenContext {
-            app: "".into(), window: "".into(), timestamp_ms: 0,
+            app: "".into(), window: "".into(), network_events: vec![], timestamp_ms: 0,
             elements: vec![ContextElement {
                 id: "root".into(), label: None, element_type: "window".into(),
                 value: None, bounds: None, confidence: 0.85,
