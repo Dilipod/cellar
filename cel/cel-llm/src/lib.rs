@@ -83,6 +83,18 @@ pub fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+/// Create an [`LlmClient`] from environment variables.
+///
+/// Reads `CEL_LLM_PROVIDER`, `CEL_LLM_API_KEY`, `CEL_LLM_MODEL`, and
+/// `CEL_LLM_ENDPOINT`. Also falls back to provider-specific key vars like
+/// `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+///
+/// Returns `LlmError::NotConfigured` if `CEL_LLM_PROVIDER` is not set.
+pub fn create_client() -> Result<LlmClient, LlmError> {
+    let config = LlmProviderConfig::from_env().ok_or(LlmError::NotConfigured)?;
+    LlmClient::new(config)
+}
+
 /// Strip markdown code fences from an LLM response and return the inner content.
 pub fn strip_code_fences(content: &str) -> &str {
     let s = content.trim();

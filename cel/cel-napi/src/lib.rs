@@ -339,25 +339,44 @@ pub fn add_scoped_knowledge(
 
 // --- LLM: cel-llm bindings ---
 
+/// Build an LLM client: uses explicit params if provided, otherwise reads env vars.
+fn build_llm_client(
+    provider: Option<String>,
+    api_key: Option<String>,
+    model: Option<String>,
+    endpoint: Option<String>,
+) -> napi::Result<cel_llm::LlmClient> {
+    let config = match provider {
+        Some(p) => cel_llm::LlmProviderConfig {
+            provider: cel_llm::ProviderKind::from(p.as_str()),
+            endpoint,
+            api_key,
+            model,
+        },
+        None => cel_llm::LlmProviderConfig::from_env().ok_or_else(|| {
+            napi::Error::from_reason(
+                "LLM not configured: set CEL_LLM_PROVIDER env var or pass provider param"
+                    .to_string(),
+            )
+        })?,
+    };
+    cel_llm::LlmClient::new(config).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 /// Send a text-only LLM chat completion. Returns the model response string.
+///
+/// If `provider` is omitted, reads config from env vars (CEL_LLM_PROVIDER, etc.).
 #[napi]
 pub async fn llm_complete(
-    provider: String,
-    api_key: String,
     system_prompt: String,
     user_prompt: String,
+    provider: Option<String>,
+    api_key: Option<String>,
     model: Option<String>,
     endpoint: Option<String>,
     max_tokens: Option<u32>,
 ) -> napi::Result<String> {
-    let config = cel_llm::LlmProviderConfig {
-        provider: cel_llm::ProviderKind::from(provider.as_str()),
-        endpoint,
-        api_key: Some(api_key),
-        model,
-    };
-    let client =
-        cel_llm::LlmClient::new(config).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let client = build_llm_client(provider, api_key, model, endpoint)?;
     client
         .complete(&system_prompt, &user_prompt, max_tokens.unwrap_or(4096))
         .await
@@ -365,25 +384,20 @@ pub async fn llm_complete(
 }
 
 /// Send an LLM chat completion with an image. Returns the model response string.
+///
+/// If `provider` is omitted, reads config from env vars (CEL_LLM_PROVIDER, etc.).
 #[napi]
 pub async fn llm_complete_with_image(
-    provider: String,
-    api_key: String,
     system_prompt: String,
     image_base64: String,
     user_prompt: String,
+    provider: Option<String>,
+    api_key: Option<String>,
     model: Option<String>,
     endpoint: Option<String>,
     max_tokens: Option<u32>,
 ) -> napi::Result<String> {
-    let config = cel_llm::LlmProviderConfig {
-        provider: cel_llm::ProviderKind::from(provider.as_str()),
-        endpoint,
-        api_key: Some(api_key),
-        model,
-    };
-    let client =
-        cel_llm::LlmClient::new(config).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let client = build_llm_client(provider, api_key, model, endpoint)?;
     let data_url = format!("data:image/png;base64,{}", image_base64);
     client
         .complete_with_image(

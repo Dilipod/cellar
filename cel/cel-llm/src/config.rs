@@ -74,6 +74,50 @@ pub struct LlmProviderConfig {
 }
 
 impl LlmProviderConfig {
+    /// Build configuration from environment variables.
+    ///
+    /// Reads the following env vars:
+    /// - `CEL_LLM_PROVIDER` — provider name (openai, anthropic, gemini, huggingface, custom)
+    /// - `CEL_LLM_MODEL` — model name/ID override
+    /// - `CEL_LLM_API_KEY` — API key (falls back to provider-specific vars below)
+    /// - `CEL_LLM_ENDPOINT` — custom endpoint URL override
+    ///
+    /// Provider-specific API key fallbacks (checked when `CEL_LLM_API_KEY` is unset):
+    /// - `OPENAI_API_KEY`
+    /// - `ANTHROPIC_API_KEY`
+    /// - `GEMINI_API_KEY`
+    /// - `HUGGINGFACE_API_KEY` / `HF_API_KEY`
+    ///
+    /// Returns `None` if `CEL_LLM_PROVIDER` is not set.
+    pub fn from_env() -> Option<Self> {
+        let provider_str = std::env::var("CEL_LLM_PROVIDER").ok()?;
+        let provider = ProviderKind::from(provider_str.as_str());
+
+        let api_key = std::env::var("CEL_LLM_API_KEY")
+            .ok()
+            .or_else(|| Self::provider_specific_key(&provider));
+
+        Some(Self {
+            provider,
+            endpoint: std::env::var("CEL_LLM_ENDPOINT").ok(),
+            api_key,
+            model: std::env::var("CEL_LLM_MODEL").ok(),
+        })
+    }
+
+    /// Look up provider-specific API key env vars.
+    fn provider_specific_key(provider: &ProviderKind) -> Option<String> {
+        match provider {
+            ProviderKind::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
+            ProviderKind::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+            ProviderKind::Gemini => std::env::var("GEMINI_API_KEY").ok(),
+            ProviderKind::HuggingFace => std::env::var("HUGGINGFACE_API_KEY")
+                .or_else(|_| std::env::var("HF_API_KEY"))
+                .ok(),
+            ProviderKind::Custom => None,
+        }
+    }
+
     /// Resolve the endpoint, falling back to provider default.
     pub fn resolved_endpoint(&self) -> &str {
         self.endpoint
@@ -110,6 +154,46 @@ mod tests {
         assert!(!ProviderKind::OpenAI.default_endpoint().is_empty());
         assert!(!ProviderKind::OpenAI.default_model().is_empty());
         assert!(ProviderKind::Custom.default_endpoint().is_empty());
+    }
+
+    #[test]
+    fn test_from_env_not_set() {
+        // CEL_LLM_PROVIDER not set → None
+        std::env::remove_var("CEL_LLM_PROVIDER");
+        assert!(LlmProviderConfig::from_env().is_none());
+    }
+
+    #[test]
+    fn test_from_env_basic() {
+        std::env::set_var("CEL_LLM_PROVIDER", "openai");
+        std::env::set_var("CEL_LLM_API_KEY", "sk-env-test");
+        std::env::set_var("CEL_LLM_MODEL", "gpt-4o-mini");
+        std::env::remove_var("CEL_LLM_ENDPOINT");
+
+        let config = LlmProviderConfig::from_env().unwrap();
+        assert_eq!(config.provider, ProviderKind::OpenAI);
+        assert_eq!(config.api_key.as_deref(), Some("sk-env-test"));
+        assert_eq!(config.model.as_deref(), Some("gpt-4o-mini"));
+        assert!(config.endpoint.is_none());
+
+        // Cleanup
+        std::env::remove_var("CEL_LLM_PROVIDER");
+        std::env::remove_var("CEL_LLM_API_KEY");
+        std::env::remove_var("CEL_LLM_MODEL");
+    }
+
+    #[test]
+    fn test_from_env_provider_specific_key() {
+        std::env::set_var("CEL_LLM_PROVIDER", "anthropic");
+        std::env::remove_var("CEL_LLM_API_KEY");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-fallback");
+
+        let config = LlmProviderConfig::from_env().unwrap();
+        assert_eq!(config.provider, ProviderKind::Anthropic);
+        assert_eq!(config.api_key.as_deref(), Some("sk-ant-fallback"));
+
+        std::env::remove_var("CEL_LLM_PROVIDER");
+        std::env::remove_var("ANTHROPIC_API_KEY");
     }
 
     #[test]
