@@ -33,5 +33,9 @@ export default defineConfig({
       name: "context-pipeline",
       testMatch: "context-pipeline.e2e.ts",
     },
+    {
+      name: "adversarial",
+      testMatch: "adversarial.e2e.ts",
+    },
   ],
 });

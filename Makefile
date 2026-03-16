@@ -18,7 +18,7 @@ test-ts:
 	pnpm test
 
 test-e2e:
-	cd e2e && npx playwright test --project=agent-engine --project=recorder --project=context-pipeline
+	cd e2e && npx playwright test --project=agent-engine --project=recorder --project=context-pipeline --project=adversarial
 
 test-e2e-ui:
 	cd e2e && npx playwright install chromium && npx playwright test
