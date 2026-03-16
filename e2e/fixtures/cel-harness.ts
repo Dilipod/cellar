@@ -221,6 +221,12 @@ export interface ValidationResult {
   totalExpected: number;
   failures: string[];
   warnings: string[];
+  // Quality metrics
+  boundsRate: number;       // Fraction of elements with valid bounds
+  avgConfidence: number;    // Mean confidence across all elements
+  sourceConsistency: boolean; // All sources are valid strings
+  uniqueIdRate: number;     // Fraction of unique IDs
+  labelRate: number;        // Fraction of elements with a label or value
 }
 
 export function validateExtraction(
@@ -234,10 +240,15 @@ export function validateExtraction(
   const failures: string[] = [];
   const warnings: string[] = [];
 
+  // ── 1. Element count checks ──
   if (ctx.elements.length < minElements) {
     failures.push(`Expected at least ${minElements} elements, got ${ctx.elements.length}`);
   }
+  if (maxElements !== undefined && ctx.elements.length > maxElements) {
+    warnings.push(`Expected at most ${maxElements} elements, got ${ctx.elements.length}`);
+  }
 
+  // ── 2. Expected element matching ──
   let matchedCount = 0;
   for (const exp of expected) {
     const matches = ctx.elements.filter(e => {
@@ -257,19 +268,108 @@ export function validateExtraction(
       failures.push(`Missing: type=${exp.type}${exp.label ? ` label="${exp.label}"` : ""}`);
     } else {
       matchedCount++;
-      if (exp.hasBounds && !matches[0].bounds) {
-        warnings.push(`${exp.type} "${exp.label}" missing bounds`);
+      if (exp.hasBounds !== false) {
+        // By default, matched elements should have bounds
+        const withBounds = matches.filter(m => m.bounds !== null);
+        if (withBounds.length === 0) {
+          warnings.push(`${exp.type} "${exp.label || "(any)"}" — none have bounds`);
+        }
       }
     }
   }
 
+  // ── 3. Per-element invariants (hard failures) ──
+  const validSources = ["accessibility_tree", "native_api", "vision", "merged"];
+  const seenIds = new Set<string>();
+  let duplicateIds = 0;
+  let boundsCount = 0;
+  let labelCount = 0;
+  let totalConfidence = 0;
+  let invalidConfidenceCount = 0;
+
   for (const e of ctx.elements) {
-    if (e.confidence < 0 || e.confidence > 1) {
-      failures.push(`Element ${e.id} invalid confidence: ${e.confidence}`);
+    // Confidence must be in [0, 1]
+    if (e.confidence < 0 || e.confidence > 1 || Number.isNaN(e.confidence)) {
+      failures.push(`Element "${e.id}" invalid confidence: ${e.confidence}`);
+      invalidConfidenceCount++;
     }
-    if (e.bounds && (e.bounds.width < 0 || e.bounds.height < 0)) {
-      failures.push(`Element ${e.id} negative bounds`);
+    totalConfidence += e.confidence;
+
+    // Bounds must be non-negative when present
+    if (e.bounds) {
+      boundsCount++;
+      if (e.bounds.width < 0 || e.bounds.height < 0) {
+        failures.push(`Element "${e.id}" negative bounds: ${e.bounds.width}x${e.bounds.height}`);
+      }
+      // Bounds should be reasonable (not absurdly large)
+      if (e.bounds.width > 10000 || e.bounds.height > 10000) {
+        warnings.push(`Element "${e.id}" unreasonably large bounds: ${e.bounds.width}x${e.bounds.height}`);
+      }
+      // Bounds should not be zero-area for interactive elements
+      if (e.bounds.width === 0 && e.bounds.height === 0 && isActionable(e.element_type)) {
+        warnings.push(`Actionable element "${e.id}" has zero-area bounds`);
+      }
     }
+
+    // Source must be a known value
+    if (!validSources.includes(e.source)) {
+      failures.push(`Element "${e.id}" unknown source: "${e.source}"`);
+    }
+
+    // ID must be non-empty
+    if (!e.id || e.id.trim() === "") {
+      failures.push(`Element has empty ID`);
+    }
+
+    // element_type must be non-empty
+    if (!e.element_type || e.element_type.trim() === "") {
+      failures.push(`Element "${e.id}" has empty element_type`);
+    }
+
+    // Track uniqueness
+    if (seenIds.has(e.id)) {
+      duplicateIds++;
+    }
+    seenIds.add(e.id);
+
+    // Track label coverage
+    if (e.label || e.value) {
+      labelCount++;
+    }
+  }
+
+  // ── 4. Quality metrics ──
+  const boundsRate = ctx.elements.length > 0 ? boundsCount / ctx.elements.length : 0;
+  const avgConfidence = ctx.elements.length > 0 ? totalConfidence / ctx.elements.length : 0;
+  const uniqueIdRate = ctx.elements.length > 0 ? seenIds.size / ctx.elements.length : 1;
+  const labelRate = ctx.elements.length > 0 ? labelCount / ctx.elements.length : 0;
+
+  // ── 5. Quality gates (failures for bad quality) ──
+
+  // At least 30% of elements should have bounds (real extraction always has bounds)
+  if (ctx.elements.length > 3 && boundsRate < 0.3) {
+    failures.push(`Low bounds coverage: ${(boundsRate * 100).toFixed(0)}% (need ≥30%)`);
+  }
+
+  // Average confidence should be reasonable
+  if (ctx.elements.length > 0 && avgConfidence < 0.3) {
+    failures.push(`Average confidence too low: ${avgConfidence.toFixed(2)} (need ≥0.3)`);
+  }
+
+  // Excessive duplicate IDs indicate extraction bugs
+  if (ctx.elements.length > 3 && duplicateIds > ctx.elements.length * 0.5) {
+    failures.push(`Too many duplicate IDs: ${duplicateIds}/${ctx.elements.length}`);
+  }
+
+  // At least some elements should have labels (not all unlabeled)
+  if (ctx.elements.length > 5 && labelRate < 0.1) {
+    failures.push(`Almost no elements have labels: ${(labelRate * 100).toFixed(0)}% (need ≥10%)`);
+  }
+
+  // Timestamp must be recent (within last 60s)
+  const now = Date.now();
+  if (ctx.timestamp_ms < now - 60_000 || ctx.timestamp_ms > now + 5_000) {
+    warnings.push(`Timestamp seems stale or future: ${ctx.timestamp_ms} vs now ${now}`);
   }
 
   return {
@@ -279,5 +379,72 @@ export function validateExtraction(
     matchedExpected: matchedCount,
     totalExpected: expected.length,
     failures, warnings,
+    boundsRate,
+    avgConfidence,
+    sourceConsistency: failures.filter(f => f.includes("unknown source")).length === 0,
+    uniqueIdRate,
+    labelRate,
+  };
+}
+
+function isActionable(elementType: string): boolean {
+  return ["button", "input", "link", "checkbox", "radio_button", "combobox",
+    "menu_item", "tab_item", "slider", "list_item", "tree_item"].includes(elementType);
+}
+
+// ─── Regression Baseline ───
+
+export interface BaselineResult {
+  scenarioId: string;
+  totalElements: number;
+  matchedExpected: number;
+  totalExpected: number;
+  boundsRate: number;
+  avgConfidence: number;
+  labelRate: number;
+  timestamp: number;
+}
+
+export interface BaselineReport {
+  results: BaselineResult[];
+  summary: {
+    totalScenarios: number;
+    passedScenarios: number;
+    overallMatchRate: number;
+    avgBoundsRate: number;
+    avgConfidence: number;
+    avgLabelRate: number;
+  };
+}
+
+export function buildBaselineReport(results: ValidationResult[]): BaselineReport {
+  const baselineResults: BaselineResult[] = results.map(r => ({
+    scenarioId: r.scenarioId,
+    totalElements: r.totalElements,
+    matchedExpected: r.matchedExpected,
+    totalExpected: r.totalExpected,
+    boundsRate: r.boundsRate,
+    avgConfidence: r.avgConfidence,
+    labelRate: r.labelRate,
+    timestamp: Date.now(),
+  }));
+
+  const passedCount = results.filter(r => r.passed).length;
+  const totalMatched = results.reduce((s, r) => s + r.matchedExpected, 0);
+  const totalExpected = results.reduce((s, r) => s + r.totalExpected, 0);
+  const avgBounds = results.reduce((s, r) => s + r.boundsRate, 0) / (results.length || 1);
+  const avgConf = results.reduce((s, r) => s + r.avgConfidence, 0) / (results.length || 1);
+  const avgLabel = results.reduce((s, r) => s + r.labelRate, 0) / (results.length || 1);
+
+  return {
+    results: baselineResults,
+    summary: {
+      totalScenarios: results.length,
+      passedScenarios: passedCount,
+      overallMatchRate: totalExpected > 0 ? totalMatched / totalExpected : 0,
+      avgBoundsRate: avgBounds,
+      avgConfidence: avgConf,
+      avgLabelRate: avgLabel,
+    },
   };
 }

@@ -663,9 +663,160 @@ mod tests {
         assert!(is_actionable_type("input"));
         assert!(is_actionable_type("link"));
         assert!(is_actionable_type("checkbox"));
+        assert!(is_actionable_type("radio_button"));
+        assert!(is_actionable_type("combobox"));
+        assert!(is_actionable_type("menu_item"));
+        assert!(is_actionable_type("tab_item"));
+        assert!(is_actionable_type("slider"));
+        assert!(is_actionable_type("list_item"));
+        assert!(is_actionable_type("tree_item"));
         assert!(!is_actionable_type("window"));
         assert!(!is_actionable_type("text"));
         assert!(!is_actionable_type("group"));
         assert!(!is_actionable_type("table"));
+        assert!(!is_actionable_type("dialog"));
+        assert!(!is_actionable_type("toolbar"));
+        assert!(!is_actionable_type("status_bar"));
+        assert!(!is_actionable_type("image"));
+        assert!(!is_actionable_type(""));
+        assert!(!is_actionable_type("unknown_type"));
+    }
+
+    #[test]
+    fn test_bounds_overlap_iou_value() {
+        // 50% overlap: two 100x100 boxes offset by 50px
+        let a = Bounds { x: 0, y: 0, width: 100, height: 100 };
+        let b = Bounds { x: 50, y: 0, width: 100, height: 100 };
+        let iou = bounds_overlap(&a, &b);
+        // Intersection: 50x100 = 5000, Union: 10000 + 10000 - 5000 = 15000
+        let expected = 5000.0 / 15000.0;
+        assert!((iou - expected).abs() < 0.01, "Expected IoU ~{:.3}, got {:.3}", expected, iou);
+    }
+
+    #[test]
+    fn test_bounds_overlap_zero_area() {
+        let a = Bounds { x: 10, y: 10, width: 0, height: 0 };
+        let b = Bounds { x: 10, y: 10, width: 0, height: 0 };
+        assert_eq!(bounds_overlap(&a, &b), 0.0, "Zero-area bounds should have 0 IoU");
+    }
+
+    #[test]
+    fn test_merge_vision_preserves_source_and_confidence() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = ScreenContext {
+            app: "test".into(), window: "test".into(),
+            network_events: vec![], elements: vec![], timestamp_ms: 0,
+        };
+
+        let vision = vec![
+            ContextElement {
+                id: "vision:0".into(),
+                label: Some("Submit".into()),
+                element_type: "button".into(),
+                value: None,
+                bounds: Some(Bounds { x: 100, y: 200, width: 80, height: 30 }),
+                confidence: 0.72,
+                source: ContextSource::Vision,
+            },
+            ContextElement {
+                id: "vision:1".into(),
+                label: Some("Cancel".into()),
+                element_type: "button".into(),
+                value: None,
+                bounds: Some(Bounds { x: 200, y: 200, width: 80, height: 30 }),
+                confidence: 0.68,
+                source: ContextSource::Vision,
+            },
+        ];
+
+        merger.merge_vision_elements(&mut ctx, vision);
+
+        assert_eq!(ctx.elements.len(), 2);
+        for e in &ctx.elements {
+            assert_eq!(e.source, ContextSource::Vision);
+            assert!(e.confidence < 0.85, "Vision elements should have lower confidence");
+            assert!(e.bounds.is_some(), "Vision elements should have bounds");
+            assert!(e.label.is_some(), "Vision elements should have labels");
+        }
+    }
+
+    #[test]
+    fn test_merge_native_does_not_lower_confidence() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = ScreenContext {
+            app: "".into(), window: "".into(), network_events: vec![], timestamp_ms: 0,
+            elements: vec![ContextElement {
+                id: "btn1".into(),
+                label: Some("OK".into()),
+                element_type: "button".into(),
+                value: None, bounds: None,
+                confidence: 0.95,
+                source: ContextSource::AccessibilityTree,
+            }],
+        };
+
+        // Native element with LOWER confidence should NOT override
+        let native = vec![ContextElement {
+            id: "btn1".into(),
+            label: Some("OK (native)".into()),
+            element_type: "button".into(),
+            value: None, bounds: None,
+            confidence: 0.80,
+            source: ContextSource::NativeApi,
+        }];
+
+        merger.merge_native_elements(&mut ctx, native);
+        let btn = ctx.elements.iter().find(|e| e.id == "btn1").unwrap();
+        // Original 0.95 should be preserved since it's higher
+        assert_eq!(btn.confidence, 0.95);
+        assert_eq!(btn.source, ContextSource::AccessibilityTree);
+    }
+
+    #[test]
+    fn test_context_timestamp_is_nonzero() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let mut merger = ContextMerger::new(stub);
+        let ctx = merger.get_context();
+        assert!(ctx.timestamp_ms > 0, "Context should have a real timestamp");
+        // Should be a recent epoch-ms value (after 2020-01-01)
+        assert!(ctx.timestamp_ms > 1_577_836_800_000);
+    }
+
+    #[test]
+    fn test_flatten_a11y_tree_sets_correct_confidence() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let mut merger = ContextMerger::new(stub);
+        let ctx = merger.get_context();
+
+        // All a11y elements should have the default 0.85 confidence
+        for e in &ctx.elements {
+            assert_eq!(e.confidence, 0.85);
+            assert_eq!(e.source, ContextSource::AccessibilityTree);
+        }
+    }
+
+    #[test]
+    fn test_role_to_string_covers_all_roles() {
+        // Ensure no role maps to empty string
+        let roles = vec![
+            ElementRole::Button, ElementRole::Input, ElementRole::Text,
+            ElementRole::Window, ElementRole::List, ElementRole::ListItem,
+            ElementRole::Menu, ElementRole::MenuItem, ElementRole::Checkbox,
+            ElementRole::ComboBox, ElementRole::Table, ElementRole::TableRow,
+            ElementRole::TableCell, ElementRole::Dialog, ElementRole::Tab,
+            ElementRole::TabItem, ElementRole::RadioButton, ElementRole::Slider,
+            ElementRole::ScrollBar, ElementRole::TreeView, ElementRole::TreeItem,
+            ElementRole::Toolbar, ElementRole::StatusBar, ElementRole::Group,
+            ElementRole::Image, ElementRole::Link,
+            ElementRole::Custom("custom_widget".into()),
+        ];
+
+        for role in &roles {
+            let s = role_to_string(role);
+            assert!(!s.is_empty(), "role_to_string({:?}) returned empty string", role);
+            assert!(!s.contains(' '), "role_to_string({:?}) contains spaces: '{}'", role, s);
+        }
     }
 }
