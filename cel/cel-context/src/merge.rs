@@ -1,11 +1,15 @@
 use crate::element::{Bounds, ContextElement, ContextSource, ScreenContext};
 use cel_accessibility::{AccessibilityElement, AccessibilityTree, ElementRole};
 use cel_display::ScreenCapture;
+use cel_network::{NetworkEvent, NetworkMonitor};
 
 /// Merges context from all available streams into a unified ScreenContext.
 pub struct ContextMerger {
     accessibility: Box<dyn AccessibilityTree>,
     display: Option<Box<dyn ScreenCapture>>,
+    network: Option<Box<dyn NetworkMonitor>>,
+    /// Recent network events, carried across calls for context.
+    recent_network: Vec<NetworkEvent>,
 }
 
 impl ContextMerger {
@@ -13,6 +17,8 @@ impl ContextMerger {
         Self {
             accessibility,
             display: None,
+            network: None,
+            recent_network: Vec::new(),
         }
     }
 
@@ -24,6 +30,22 @@ impl ContextMerger {
         Self {
             accessibility,
             display: Some(display),
+            network: None,
+            recent_network: Vec::new(),
+        }
+    }
+
+    /// Create a merger with all available streams.
+    pub fn with_all(
+        accessibility: Box<dyn AccessibilityTree>,
+        display: Box<dyn ScreenCapture>,
+        network: Box<dyn NetworkMonitor>,
+    ) -> Self {
+        Self {
+            accessibility,
+            display: Some(display),
+            network: Some(network),
+            recent_network: Vec::new(),
         }
     }
 
@@ -33,7 +55,8 @@ impl ContextMerger {
     /// 1. Native API (highest confidence, when adapter available)
     /// 2. Accessibility tree (structured, reliable on modern apps)
     /// 3. Vision (fallback, used when others are insufficient)
-    pub fn get_context(&self) -> ScreenContext {
+    /// 4. Network (supplementary — connection state signals)
+    pub fn get_context(&mut self) -> ScreenContext {
         let mut elements = Vec::new();
 
         // Query accessibility tree
@@ -43,6 +66,17 @@ impl ContextMerger {
             }
             Err(e) => {
                 tracing::warn!("Accessibility tree unavailable: {}", e);
+            }
+        }
+
+        // Drain network events (supplementary context)
+        if let Some(ref mut net) = self.network {
+            let events = net.drain_events();
+            self.recent_network.extend(events);
+            // Keep only last 50 events
+            if self.recent_network.len() > 50 {
+                let drain_count = self.recent_network.len() - 50;
+                self.recent_network.drain(..drain_count);
             }
         }
 
@@ -65,6 +99,11 @@ impl ContextMerger {
                 .unwrap_or_default()
                 .as_millis() as u64,
         }
+    }
+
+    /// Get recent network events (for supplementary context).
+    pub fn recent_network_events(&self) -> &[NetworkEvent] {
+        &self.recent_network
     }
 
     /// Detect the foreground application and window title.
@@ -237,7 +276,6 @@ mod tests {
 
     #[test]
     fn test_bounds_overlap_adjacent() {
-        // Touching but not overlapping
         let a = Bounds { x: 0, y: 0, width: 50, height: 50 };
         let b = Bounds { x: 50, y: 0, width: 50, height: 50 };
         assert_eq!(bounds_overlap(&a, &b), 0.0);
@@ -245,20 +283,17 @@ mod tests {
 
     #[test]
     fn test_bounds_overlap_contained() {
-        // b fully contained in a
         let a = Bounds { x: 0, y: 0, width: 200, height: 200 };
         let b = Bounds { x: 50, y: 50, width: 50, height: 50 };
         let iou = bounds_overlap(&a, &b);
-        // IoU = 2500 / (40000 + 2500 - 2500) = 2500 / 40000 = 0.0625
         assert!(iou > 0.0 && iou < 0.1);
     }
 
     #[test]
     fn test_get_context_with_stub() {
         let stub = Box::new(cel_accessibility::StubAccessibility);
-        let merger = ContextMerger::new(stub);
+        let mut merger = ContextMerger::new(stub);
         let ctx = merger.get_context();
-        // Stub returns a root window element
         assert!(!ctx.elements.is_empty());
         assert_eq!(ctx.elements[0].element_type, "window");
         assert_eq!(ctx.elements[0].confidence, 0.85);
@@ -270,10 +305,21 @@ mod tests {
     fn test_merge_native_elements_overrides_by_id() {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let merger = ContextMerger::new(stub);
-        let mut ctx = merger.get_context();
+        let mut ctx = ScreenContext {
+            app: "".into(), window: "".into(), timestamp_ms: 0,
+            elements: vec![ContextElement {
+                id: "root".into(),
+                label: Some("Stub Window".into()),
+                element_type: "window".into(),
+                value: None,
+                bounds: None,
+                confidence: 0.85,
+                source: ContextSource::AccessibilityTree,
+            }],
+        };
 
         let native = vec![ContextElement {
-            id: "root".into(), // Same ID as stub root
+            id: "root".into(),
             label: Some("Excel".into()),
             element_type: "window".into(),
             value: None,
@@ -284,7 +330,7 @@ mod tests {
 
         merger.merge_native_elements(&mut ctx, native);
         let root = ctx.elements.iter().find(|e| e.id == "root").unwrap();
-        assert_eq!(root.confidence, 0.98); // Overridden
+        assert_eq!(root.confidence, 0.98);
         assert_eq!(root.source, ContextSource::NativeApi);
         assert_eq!(root.label.as_deref(), Some("Excel"));
     }
@@ -293,7 +339,18 @@ mod tests {
     fn test_merge_native_elements_adds_new() {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let merger = ContextMerger::new(stub);
-        let mut ctx = merger.get_context();
+        let mut ctx = ScreenContext {
+            app: "".into(), window: "".into(), timestamp_ms: 0,
+            elements: vec![ContextElement {
+                id: "root".into(),
+                label: None,
+                element_type: "window".into(),
+                value: None,
+                bounds: None,
+                confidence: 0.85,
+                source: ContextSource::AccessibilityTree,
+            }],
+        };
         let initial_count = ctx.elements.len();
 
         let native = vec![ContextElement {
@@ -308,7 +365,6 @@ mod tests {
 
         merger.merge_native_elements(&mut ctx, native);
         assert_eq!(ctx.elements.len(), initial_count + 1);
-        // Highest confidence should be first after sort
         assert_eq!(ctx.elements[0].confidence, 0.98);
     }
 
@@ -356,7 +412,6 @@ mod tests {
             timestamp_ms: 0,
         };
 
-        // Vision element in same location — should NOT be added (IoU > 0.5)
         let vision = vec![ContextElement {
             id: "vision:btn:1".into(),
             label: Some("OK".into()),
@@ -368,14 +423,21 @@ mod tests {
         }];
 
         merger.merge_vision_elements(&mut ctx, vision);
-        assert_eq!(ctx.elements.len(), 1); // Not added — dominated
+        assert_eq!(ctx.elements.len(), 1);
     }
 
     #[test]
     fn test_elements_sorted_by_confidence() {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let merger = ContextMerger::new(stub);
-        let mut ctx = merger.get_context();
+        let mut ctx = ScreenContext {
+            app: "".into(), window: "".into(), timestamp_ms: 0,
+            elements: vec![ContextElement {
+                id: "root".into(), label: None, element_type: "window".into(),
+                value: None, bounds: None, confidence: 0.85,
+                source: ContextSource::AccessibilityTree,
+            }],
+        };
 
         let native = vec![
             ContextElement {
@@ -391,7 +453,6 @@ mod tests {
         ];
 
         merger.merge_native_elements(&mut ctx, native);
-        // Should be sorted descending by confidence
         for i in 0..ctx.elements.len() - 1 {
             assert!(ctx.elements[i].confidence >= ctx.elements[i + 1].confidence);
         }
@@ -431,5 +492,27 @@ mod tests {
         for (role, expected) in mappings {
             assert_eq!(role_to_string(&role), expected);
         }
+    }
+
+    #[test]
+    fn test_recent_network_events_empty() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        assert!(merger.recent_network_events().is_empty());
+    }
+
+    #[test]
+    fn test_with_all_constructor() {
+        let a11y = Box::new(cel_accessibility::StubAccessibility);
+        let net = Box::new(cel_network::StubNetworkMonitor);
+
+        // We can't easily construct a stub ScreenCapture, so test with_all by just checking network
+        let merger = ContextMerger {
+            accessibility: a11y,
+            display: None,
+            network: Some(net),
+            recent_network: Vec::new(),
+        };
+        assert!(merger.recent_network_events().is_empty());
     }
 }

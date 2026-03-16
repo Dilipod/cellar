@@ -16,7 +16,7 @@ pub fn cel_version() -> String {
 pub fn get_context() -> napi::Result<String> {
     let a11y = cel_accessibility::create_tree();
     let display = cel_display::create_capture();
-    let merger = cel_context::ContextMerger::with_display(a11y, display);
+    let mut merger = cel_context::ContextMerger::with_display(a11y, display);
     let context = merger.get_context();
     serde_json::to_string(&context).map_err(|e| napi::Error::from_reason(e.to_string()))
 }

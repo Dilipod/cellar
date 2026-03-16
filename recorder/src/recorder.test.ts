@@ -86,6 +86,58 @@ describe("ExplicitRecorder", () => {
     expect(wf.steps.length).toBe(0);
     expect(wf.app).toBe("unknown");
   });
+
+  it("should identify target elements", () => {
+    const recorder = new ExplicitRecorder();
+    recorder.start();
+    recorder.recordStep(makeContext(), "click:Button 0");
+    const steps = recorder.stop();
+
+    // Should find element by label match
+    expect(steps[0].targetElement).toBeDefined();
+    expect(steps[0].targetElement?.label).toBe("Button 0");
+  });
+
+  it("should track step count", () => {
+    const recorder = new ExplicitRecorder();
+    expect(recorder.stepCount).toBe(0);
+    recorder.start();
+    recorder.recordStep(makeContext(), "click:btn");
+    recorder.recordStep(makeContext(), "click:btn");
+    expect(recorder.stepCount).toBe(2);
+  });
+
+  it("should generate proper workflow actions", () => {
+    const recorder = new ExplicitRecorder();
+    recorder.start();
+    recorder.recordStep(makeContext(), "click:target");
+    recorder.recordStep(makeContext(), "type:field:Hello World");
+    recorder.recordStep(makeContext(), "key:Enter");
+    recorder.recordStep(makeContext(), "key_combo:Ctrl:S");
+    recorder.recordStep(makeContext(), "scroll:0:100");
+    recorder.recordStep(makeContext(), "wait:2000");
+    recorder.stop();
+
+    const wf = recorder.toWorkflow("test", "test");
+    expect(wf.steps[0].action).toEqual({ type: "click", target: "target" });
+    expect(wf.steps[1].action).toEqual({ type: "type", target: "field", text: "Hello World" });
+    expect(wf.steps[2].action).toEqual({ type: "key", key: "Enter" });
+    expect(wf.steps[3].action).toEqual({ type: "key_combo", keys: ["Ctrl", "S"] });
+    expect(wf.steps[4].action).toEqual({ type: "scroll", dx: 0, dy: 100 });
+    expect(wf.steps[5].action).toEqual({ type: "wait", ms: 2000 });
+  });
+
+  it("should set expected context from next step", () => {
+    const recorder = new ExplicitRecorder();
+    recorder.start();
+    recorder.recordStep(makeContext("AppA"), "click:btn");
+    recorder.recordStep(makeContext("AppB"), "click:btn");
+    recorder.stop();
+
+    const wf = recorder.toWorkflow("test", "test");
+    expect(wf.steps[0].expected?.app).toBe("AppB");
+    expect(wf.steps[1].expected).toBeUndefined(); // Last step has no expected
+  });
 });
 
 describe("PassiveRecorder", () => {
@@ -111,27 +163,77 @@ describe("PassiveRecorder", () => {
     const recorder = new PassiveRecorder();
     recorder.start();
     recorder.onContext(makeContext());
-    // Pattern detection is TODO, but this should not throw
     recorder.stop();
+  });
+
+  it("should detect app-switch patterns", () => {
+    const recorder = new PassiveRecorder("high"); // High frequency = check often
+    recorder.start();
+
+    // Simulate A→B→A→B→A→B pattern
+    for (let i = 0; i < 20; i++) {
+      const app = i % 2 === 0 ? "Excel" : "SAP";
+      recorder.onContext(makeContext(app));
+    }
+
+    recorder.stop();
+    const patterns = recorder.getPatterns();
+
+    // Should detect the Excel → SAP switching pattern
+    const switchPattern = patterns.find((p) => p.description.includes("→"));
+    expect(switchPattern).toBeDefined();
+    expect(switchPattern!.occurrences).toBeGreaterThanOrEqual(3);
+  });
+
+  it("should detect heavy app usage", () => {
+    const recorder = new PassiveRecorder("high");
+    recorder.start();
+
+    // Simulate heavy Excel usage
+    for (let i = 0; i < 60; i++) {
+      recorder.onContext(makeContext("Excel"));
+    }
+
+    recorder.stop();
+    const patterns = recorder.getPatterns();
+    const burstPattern = patterns.find((p) => p.description.includes("Heavy usage"));
+    expect(burstPattern).toBeDefined();
+    expect(burstPattern!.occurrences).toBeGreaterThan(50);
   });
 
   it("should create workflow draft from pattern", () => {
     const recorder = new PassiveRecorder();
     const pattern = {
-      description: "Copy-paste pattern",
+      description: "App switch: Excel → SAP",
       occurrences: 5,
       firstSeen: new Date(),
       lastSeen: new Date(),
-      steps: ["Ctrl+C", "Switch window", "Ctrl+V"],
+      steps: ["Switch to Excel", "Switch to SAP"],
     };
     const draft = recorder.toWorkflowDraft(pattern);
     expect(draft.name).toBe("untitled");
-    expect(draft.description).toBe("Auto-detected pattern");
+    expect(draft.description).toContain("Auto-detected");
+    expect(draft.steps).toHaveLength(2);
+    expect(draft.steps![0].action.type).toBe("custom");
   });
 
   it("should set frequency", () => {
     const recorder = new PassiveRecorder("low");
     recorder.setFrequency("high");
     // No getter, but should not throw
+  });
+
+  it("should cap history size", () => {
+    const recorder = new PassiveRecorder("high");
+    recorder.start();
+
+    // Push more than maxHistory
+    for (let i = 0; i < 1200; i++) {
+      recorder.onContext(makeContext("App"));
+    }
+
+    recorder.stop();
+    // Should not crash, patterns should still work
+    expect(recorder.getPatterns()).toBeDefined();
   });
 });
