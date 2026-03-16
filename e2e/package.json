@@ -4,7 +4,8 @@
   "private": true,
   "description": "End-to-end tests for the Cellar platform",
   "scripts": {
-    "test": "playwright test",
+    "test": "playwright test --project=agent-engine --project=recorder --project=context-pipeline",
+    "test:all": "playwright test",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
     "test:report": "playwright show-report"
