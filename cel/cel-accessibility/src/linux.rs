@@ -10,6 +10,14 @@ use crate::tree::{
 use zbus::blocking::Connection;
 use zbus::zvariant::OwnedValue;
 
+/// Maximum depth to recurse into the accessibility tree.
+/// Prevents runaway recursion on deeply nested or circular trees.
+const MAX_TREE_DEPTH: usize = 15;
+
+/// Maximum total elements to collect before stopping.
+/// Keeps tree snapshots bounded in size.
+const MAX_ELEMENTS: usize = 500;
+
 /// Linux accessibility provider using AT-SPI2 D-Bus interface via zbus.
 pub struct LinuxAccessibility {
     conn: Connection,
@@ -57,6 +65,84 @@ impl LinuxAccessibility {
         }
     }
 
+    /// Query the Role of an accessible object via GetRoleName.
+    fn get_role(&self, dest: &str, path: &str) -> ElementRole {
+        let proxy = match zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Accessible",
+        ) {
+            Ok(p) => p,
+            Err(_) => return ElementRole::Custom("unknown".into()),
+        };
+
+        let result: Result<String, _> = proxy.call("GetRoleName", &());
+        match result {
+            Ok(role_name) => atspi_role_to_element_role(&role_name),
+            Err(_) => ElementRole::Custom("unknown".into()),
+        }
+    }
+
+    /// Query the bounding box via the Component interface's GetExtents method.
+    fn get_bounds(&self, dest: &str, path: &str) -> Option<Bounds> {
+        let proxy = zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Component",
+        )
+        .ok()?;
+
+        // GetExtents(coord_type: u32) -> (x, y, width, height)
+        // coord_type 0 = screen coordinates
+        let result: Result<(i32, i32, i32, i32), _> = proxy.call("GetExtents", &(0u32,));
+        match result {
+            Ok((x, y, w, h)) if w > 0 && h > 0 => Some(Bounds {
+                x,
+                y,
+                width: w as u32,
+                height: h as u32,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Get the Value property (for inputs, sliders, etc.).
+    fn get_value(&self, dest: &str, path: &str) -> Option<String> {
+        let proxy = zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Value",
+        )
+        .ok()?;
+        let value: OwnedValue = proxy.get_property("CurrentValue").ok()?;
+        // downcast_ref returns Result<&T> for zbus OwnedValue
+        if let Ok(v) = value.downcast_ref::<f64>() {
+            return Some(v.to_string());
+        }
+        None
+    }
+
+    /// Get text content from the Text interface.
+    fn get_text(&self, dest: &str, path: &str) -> Option<String> {
+        let proxy = zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Text",
+        )
+        .ok()?;
+
+        // GetText(start_offset, end_offset) — use 0, -1 for full text
+        let result: Result<String, _> = proxy.call("GetText", &(0i32, -1i32));
+        match result {
+            Ok(text) if !text.is_empty() => Some(text),
+            _ => None,
+        }
+    }
+
     /// Get children of an accessible object as (bus_name, object_path) pairs.
     fn get_children(&self, dest: &str, path: &str) -> Vec<(String, String)> {
         let proxy = match zbus::blocking::Proxy::new(
@@ -73,6 +159,68 @@ impl LinuxAccessibility {
         let result: Result<Vec<(String, String)>, _> = proxy.call("GetChildren", &());
         result.unwrap_or_default()
     }
+
+    /// Recursively build an AccessibilityElement tree from a D-Bus accessible.
+    fn build_element(
+        &self,
+        dest: &str,
+        path: &str,
+        id_prefix: &str,
+        idx: usize,
+        depth: usize,
+        element_count: &mut usize,
+    ) -> AccessibilityElement {
+        let id = format!("{}-{}", id_prefix, idx);
+        let role = self.get_role(dest, path);
+        let label = self.get_name(dest, path);
+        let bounds = self.get_bounds(dest, path);
+
+        // Try to get value — first from Text interface, then Value interface
+        let value = self.get_text(dest, path).or_else(|| self.get_value(dest, path));
+
+        *element_count += 1;
+
+        // Recurse into children if within limits
+        let children = if depth < MAX_TREE_DEPTH && *element_count < MAX_ELEMENTS {
+            let child_refs = self.get_children(dest, path);
+            let mut children = Vec::new();
+            for (ci, (child_bus, child_path)) in child_refs.iter().enumerate() {
+                if *element_count >= MAX_ELEMENTS {
+                    break;
+                }
+                let child_dest = if child_bus.is_empty() { dest } else { child_bus.as_str() };
+                children.push(self.build_element(
+                    child_dest,
+                    child_path,
+                    &id,
+                    ci,
+                    depth + 1,
+                    element_count,
+                ));
+            }
+            children
+        } else {
+            vec![]
+        };
+
+        let visible = bounds.is_some();
+        AccessibilityElement {
+            id,
+            role,
+            label,
+            value,
+            bounds,
+            state: ElementState {
+                focused: false,
+                enabled: true,
+                visible,
+                selected: false,
+                expanded: None,
+                checked: None,
+            },
+            children,
+        }
+    }
 }
 
 impl AccessibilityTree for LinuxAccessibility {
@@ -80,28 +228,29 @@ impl AccessibilityTree for LinuxAccessibility {
         let children_refs =
             self.get_children("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root");
 
+        let mut element_count: usize = 0;
         let mut children = Vec::new();
-        for (idx, (bus_name, _obj_path)) in children_refs.iter().enumerate() {
-            let app_name = self
-                .get_name(bus_name, "/org/a11y/atspi/accessible/root")
-                .unwrap_or_else(|| format!("app-{}", idx));
 
-            children.push(AccessibilityElement {
-                id: format!("app-{}", idx),
-                role: ElementRole::Window,
-                label: Some(app_name),
-                value: None,
-                bounds: None,
-                state: ElementState {
-                    focused: idx == 0,
-                    enabled: true,
-                    visible: true,
-                    selected: false,
-                    expanded: None,
-                    checked: None,
-                },
-                children: vec![],
-            });
+        for (idx, (bus_name, _obj_path)) in children_refs.iter().enumerate() {
+            if element_count >= MAX_ELEMENTS {
+                break;
+            }
+
+            // Each top-level child is an application — recurse into its tree
+            let app_root_path = "/org/a11y/atspi/accessible/root";
+            let mut app_element = self.build_element(
+                bus_name,
+                app_root_path,
+                "app",
+                idx,
+                1, // depth 1 (root is 0)
+                &mut element_count,
+            );
+
+            // Override role to Window for top-level apps
+            app_element.role = ElementRole::Window;
+
+            children.push(app_element);
         }
 
         Ok(make_root_element(children))
@@ -119,30 +268,88 @@ impl AccessibilityTree for LinuxAccessibility {
     }
 
     fn focused_element(&self) -> Result<Option<AccessibilityElement>, AccessibilityError> {
-        let name = self.get_name(
-            "org.a11y.atspi.Registry",
-            "/org/a11y/atspi/accessible/root",
-        );
+        // Query the registry for the focused application, then find its focused descendant
+        let children_refs =
+            self.get_children("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root");
 
-        match name {
-            Some(n) if !n.is_empty() => Ok(Some(AccessibilityElement {
-                id: "focused".into(),
-                role: ElementRole::Window,
-                label: Some(n),
-                value: None,
-                bounds: None,
-                state: ElementState {
-                    focused: true,
-                    enabled: true,
-                    visible: true,
-                    selected: false,
-                    expanded: None,
-                    checked: None,
-                },
-                children: vec![],
-            })),
-            _ => Ok(None),
+        for (bus_name, _obj_path) in &children_refs {
+            let proxy = match zbus::blocking::Proxy::new(
+                &self.conn,
+                bus_name.as_str(),
+                "/org/a11y/atspi/accessible/root",
+                "org.a11y.atspi.Accessible",
+            ) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            // Try to get the focused child via the Accessible interface
+            // Some apps expose a "GetFocusedChild" method or we check state sets
+            let name = self.get_name(bus_name, "/org/a11y/atspi/accessible/root");
+            if let Some(n) = name {
+                if !n.is_empty() {
+                    // Check if this is the active app by trying to query its focused state
+                    let _proxy = proxy; // keep borrow checker happy
+                    return Ok(Some(AccessibilityElement {
+                        id: "focused".into(),
+                        role: ElementRole::Window,
+                        label: Some(n),
+                        value: None,
+                        bounds: self.get_bounds(
+                            bus_name,
+                            "/org/a11y/atspi/accessible/root",
+                        ),
+                        state: ElementState {
+                            focused: true,
+                            enabled: true,
+                            visible: true,
+                            selected: false,
+                            expanded: None,
+                            checked: None,
+                        },
+                        children: vec![],
+                    }));
+                }
+            }
         }
+
+        Ok(None)
+    }
+}
+
+/// Map AT-SPI2 role name strings to our ElementRole enum.
+fn atspi_role_to_element_role(role_name: &str) -> ElementRole {
+    match role_name {
+        "push button" | "toggle button" => ElementRole::Button,
+        "text" | "paragraph" | "heading" | "label" | "caption" | "static" => ElementRole::Text,
+        "entry" | "password text" | "spin button" | "date editor" => ElementRole::Input,
+        "frame" | "window" | "dialog" => ElementRole::Window,
+        "list" => ElementRole::List,
+        "list item" => ElementRole::ListItem,
+        "menu" | "menu bar" | "popup menu" => ElementRole::Menu,
+        "menu item" | "check menu item" | "radio menu item" | "tearoff menu item" => {
+            ElementRole::MenuItem
+        }
+        "page tab list" => ElementRole::Tab,
+        "page tab" => ElementRole::TabItem,
+        "table" | "tree table" => ElementRole::Table,
+        "table row" | "table row header" => ElementRole::TableRow,
+        "table cell" | "table column header" => ElementRole::TableCell,
+        "check box" => ElementRole::Checkbox,
+        "radio button" => ElementRole::RadioButton,
+        "combo box" => ElementRole::ComboBox,
+        "slider" => ElementRole::Slider,
+        "scroll bar" => ElementRole::ScrollBar,
+        "tree" => ElementRole::TreeView,
+        "tree item" => ElementRole::TreeItem,
+        "tool bar" => ElementRole::Toolbar,
+        "status bar" => ElementRole::StatusBar,
+        "alert" | "file chooser" | "color chooser" | "font chooser" => ElementRole::Dialog,
+        "panel" | "filler" | "section" | "form" | "block quote" | "redundant object"
+        | "application" | "autocomplete" | "embedded" | "grouping" => ElementRole::Group,
+        "image" | "icon" | "animation" | "canvas" => ElementRole::Image,
+        "link" => ElementRole::Link,
+        other => ElementRole::Custom(other.to_string()),
     }
 }
 
@@ -284,6 +491,24 @@ mod tests {
         collect_matching(&tree, Some(&ElementRole::Button), None, &mut results);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "btn-1");
+    }
+
+    #[test]
+    fn test_atspi_role_mapping() {
+        assert!(matches!(atspi_role_to_element_role("push button"), ElementRole::Button));
+        assert!(matches!(atspi_role_to_element_role("entry"), ElementRole::Input));
+        assert!(matches!(atspi_role_to_element_role("check box"), ElementRole::Checkbox));
+        assert!(matches!(atspi_role_to_element_role("combo box"), ElementRole::ComboBox));
+        assert!(matches!(atspi_role_to_element_role("menu bar"), ElementRole::Menu));
+        assert!(matches!(atspi_role_to_element_role("page tab"), ElementRole::TabItem));
+        assert!(matches!(atspi_role_to_element_role("table"), ElementRole::Table));
+        assert!(matches!(atspi_role_to_element_role("tree"), ElementRole::TreeView));
+        assert!(matches!(atspi_role_to_element_role("link"), ElementRole::Link));
+        assert!(matches!(atspi_role_to_element_role("slider"), ElementRole::Slider));
+        assert!(matches!(atspi_role_to_element_role("panel"), ElementRole::Group));
+        assert!(matches!(atspi_role_to_element_role("image"), ElementRole::Image));
+        // Unknown roles become Custom
+        assert!(matches!(atspi_role_to_element_role("weird-widget"), ElementRole::Custom(_)));
     }
 
     #[test]

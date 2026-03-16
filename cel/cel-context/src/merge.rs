@@ -2,14 +2,22 @@ use crate::element::{Bounds, ContextElement, ContextSource, ScreenContext};
 use cel_accessibility::{AccessibilityElement, AccessibilityTree, ElementRole};
 use cel_display::ScreenCapture;
 use cel_network::{NetworkEvent, NetworkMonitor};
+use cel_vision::VisionProvider;
+
+/// Minimum number of actionable elements (buttons, inputs, links, etc.)
+/// below which the vision fallback is triggered.
+const VISION_FALLBACK_THRESHOLD: usize = 3;
 
 /// Merges context from all available streams into a unified ScreenContext.
 pub struct ContextMerger {
     accessibility: Box<dyn AccessibilityTree>,
     display: Option<Box<dyn ScreenCapture>>,
     network: Option<Box<dyn NetworkMonitor>>,
+    vision: Option<Box<dyn VisionProvider>>,
     /// Recent network events, carried across calls for context.
     recent_network: Vec<NetworkEvent>,
+    /// Tokio runtime handle for running async vision calls from sync context.
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 impl ContextMerger {
@@ -18,7 +26,9 @@ impl ContextMerger {
             accessibility,
             display: None,
             network: None,
+            vision: None,
             recent_network: Vec::new(),
+            runtime: tokio::runtime::Handle::try_current().ok(),
         }
     }
 
@@ -31,7 +41,9 @@ impl ContextMerger {
             accessibility,
             display: Some(display),
             network: None,
+            vision: None,
             recent_network: Vec::new(),
+            runtime: tokio::runtime::Handle::try_current().ok(),
         }
     }
 
@@ -45,8 +57,22 @@ impl ContextMerger {
             accessibility,
             display: Some(display),
             network: Some(network),
+            vision: None,
             recent_network: Vec::new(),
+            runtime: tokio::runtime::Handle::try_current().ok(),
         }
+    }
+
+    /// Attach a vision provider for automatic fallback when accessibility is insufficient.
+    pub fn with_vision(mut self, vision: Box<dyn VisionProvider>) -> Self {
+        self.vision = Some(vision);
+        self
+    }
+
+    /// Set the tokio runtime handle for async vision calls.
+    pub fn with_runtime(mut self, handle: tokio::runtime::Handle) -> Self {
+        self.runtime = Some(handle);
+        self
     }
 
     /// Build a unified context by querying all available streams.
@@ -54,7 +80,7 @@ impl ContextMerger {
     /// Priority order:
     /// 1. Native API (highest confidence, when adapter available)
     /// 2. Accessibility tree (structured, reliable on modern apps)
-    /// 3. Vision (fallback, used when others are insufficient)
+    /// 3. Vision (automatic fallback when a11y yields few actionable elements)
     /// 4. Network (supplementary — connection state signals)
     pub fn get_context(&mut self) -> ScreenContext {
         let mut elements = Vec::new();
@@ -66,6 +92,29 @@ impl ContextMerger {
             }
             Err(e) => {
                 tracing::warn!("Accessibility tree unavailable: {}", e);
+            }
+        }
+
+        // Vision fallback: if too few actionable elements, capture screen and run vision
+        let actionable_count = elements
+            .iter()
+            .filter(|e| is_actionable_type(&e.element_type))
+            .count();
+
+        if actionable_count < VISION_FALLBACK_THRESHOLD {
+            if let Some(vision_elements) = self.run_vision_fallback() {
+                for ve in vision_elements {
+                    let dominated = elements.iter().any(|e| {
+                        if let (Some(eb), Some(vb)) = (&e.bounds, &ve.bounds) {
+                            bounds_overlap(eb, vb) > 0.5
+                        } else {
+                            false
+                        }
+                    });
+                    if !dominated {
+                        elements.push(ve);
+                    }
+                }
             }
         }
 
@@ -107,13 +156,81 @@ impl ContextMerger {
         &self.recent_network
     }
 
+    /// Run vision analysis on the current screen, returning ContextElements.
+    /// Returns None if vision is not configured or capture/analysis fails.
+    fn run_vision_fallback(&mut self) -> Option<Vec<ContextElement>> {
+        let vision = self.vision.as_ref()?;
+        let display = self.display.as_mut()?;
+        let runtime = self.runtime.as_ref()?;
+
+        let frame = match display.capture_frame() {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!("Vision fallback: capture failed: {}", e);
+                return None;
+            }
+        };
+
+        tracing::info!("Running vision fallback ({} provider)", vision.name());
+
+        let vision_elements = match runtime.block_on(vision.analyze(&frame, "")) {
+            Ok(ve) => ve,
+            Err(e) => {
+                tracing::warn!("Vision fallback: analysis failed: {}", e);
+                return None;
+            }
+        };
+
+        let context_elements: Vec<ContextElement> = vision_elements
+            .into_iter()
+            .enumerate()
+            .map(|(i, ve)| ContextElement {
+                id: format!("vision:{}", i),
+                label: Some(ve.label),
+                element_type: ve.element_type,
+                value: None,
+                bounds: ve.bounds.map(|b| Bounds {
+                    x: b.x,
+                    y: b.y,
+                    width: b.width,
+                    height: b.height,
+                }),
+                confidence: ve.confidence,
+                source: ContextSource::Vision,
+            })
+            .collect();
+
+        if context_elements.is_empty() {
+            None
+        } else {
+            Some(context_elements)
+        }
+    }
+
     /// Detect the foreground application and window title.
-    /// Uses the display layer's window listing — first non-minimized window is the foreground.
+    ///
+    /// Strategy:
+    /// 1. Try the accessibility tree's focused element (most reliable).
+    /// 2. Fall back to the display layer's window list (first non-minimized).
     fn detect_foreground(&self) -> (String, String) {
+        // Strategy 1: accessibility focused element
+        match self.accessibility.focused_element() {
+            Ok(Some(focused)) => {
+                let label = focused.label.unwrap_or_default();
+                if !label.is_empty() {
+                    return (label.clone(), label);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::debug!("Could not get focused element: {}", e);
+            }
+        }
+
+        // Strategy 2: display layer window list
         if let Some(display) = &self.display {
             match display.list_windows() {
                 Ok(windows) => {
-                    // First non-minimized window is typically the foreground
                     if let Some(fg) = windows.iter().find(|w| !w.is_minimized) {
                         return (fg.app_name.clone(), fg.title.clone());
                     }
@@ -123,6 +240,7 @@ impl ContextMerger {
                 }
             }
         }
+
         (String::new(), String::new())
     }
 
@@ -219,6 +337,24 @@ fn role_to_string(role: &ElementRole) -> &str {
         ElementRole::Link => "link",
         ElementRole::Custom(s) => s.as_str(),
     }
+}
+
+/// Whether an element type is "actionable" — interactive elements that an agent can click/type into.
+fn is_actionable_type(element_type: &str) -> bool {
+    matches!(
+        element_type,
+        "button"
+            | "input"
+            | "link"
+            | "checkbox"
+            | "radio_button"
+            | "combobox"
+            | "menu_item"
+            | "tab_item"
+            | "slider"
+            | "list_item"
+            | "tree_item"
+    )
 }
 
 /// Compute intersection-over-union of two bounding boxes.
@@ -509,13 +645,27 @@ mod tests {
         let a11y = Box::new(cel_accessibility::StubAccessibility);
         let net = Box::new(cel_network::StubNetworkMonitor);
 
-        // We can't easily construct a stub ScreenCapture, so test with_all by just checking network
+        // We can't easily construct a stub ScreenCapture, so test network path manually
         let merger = ContextMerger {
             accessibility: a11y,
             display: None,
             network: Some(net),
+            vision: None,
             recent_network: Vec::new(),
+            runtime: None,
         };
         assert!(merger.recent_network_events().is_empty());
+    }
+
+    #[test]
+    fn test_is_actionable_type() {
+        assert!(is_actionable_type("button"));
+        assert!(is_actionable_type("input"));
+        assert!(is_actionable_type("link"));
+        assert!(is_actionable_type("checkbox"));
+        assert!(!is_actionable_type("window"));
+        assert!(!is_actionable_type("text"));
+        assert!(!is_actionable_type("group"));
+        assert!(!is_actionable_type("table"));
     }
 }
