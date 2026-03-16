@@ -4,6 +4,7 @@ members = [
     "cel/cel-display",
     "cel/cel-input",
     "cel/cel-accessibility",
+    "cel/cel-llm",
     "cel/cel-vision",
     "cel/cel-network",
     "cel/cel-context",
@@ -35,6 +36,7 @@ thiserror = "1"
 async-trait = "0.1"
 
 # CEL internal crates
+cel-llm = { path = "cel/cel-llm" }
 cel-display = { path = "cel/cel-display" }
 cel-input = { path = "cel/cel-input" }
 cel-accessibility = { path = "cel/cel-accessibility" }

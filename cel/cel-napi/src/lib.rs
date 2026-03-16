@@ -347,3 +347,62 @@ pub fn add_scoped_knowledge(
         .add_scoped_knowledge(&content, &source, workflow_scope.as_deref(), tags.as_deref())
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
+
+// --- LLM: cel-llm bindings ---
+
+/// Send a text-only LLM chat completion. Returns the model response string.
+#[napi]
+pub async fn llm_complete(
+    provider: String,
+    api_key: String,
+    system_prompt: String,
+    user_prompt: String,
+    model: Option<String>,
+    endpoint: Option<String>,
+    max_tokens: Option<u32>,
+) -> napi::Result<String> {
+    let config = cel_llm::LlmProviderConfig {
+        provider: cel_llm::ProviderKind::from(provider.as_str()),
+        endpoint,
+        api_key: Some(api_key),
+        model,
+    };
+    let client =
+        cel_llm::LlmClient::new(config).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    client
+        .complete(&system_prompt, &user_prompt, max_tokens.unwrap_or(4096))
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Send an LLM chat completion with an image. Returns the model response string.
+#[napi]
+pub async fn llm_complete_with_image(
+    provider: String,
+    api_key: String,
+    system_prompt: String,
+    image_base64: String,
+    user_prompt: String,
+    model: Option<String>,
+    endpoint: Option<String>,
+    max_tokens: Option<u32>,
+) -> napi::Result<String> {
+    let config = cel_llm::LlmProviderConfig {
+        provider: cel_llm::ProviderKind::from(provider.as_str()),
+        endpoint,
+        api_key: Some(api_key),
+        model,
+    };
+    let client =
+        cel_llm::LlmClient::new(config).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let data_url = format!("data:image/png;base64,{}", image_base64);
+    client
+        .complete_with_image(
+            &system_prompt,
+            &data_url,
+            &user_prompt,
+            max_tokens.unwrap_or(4096),
+        )
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
