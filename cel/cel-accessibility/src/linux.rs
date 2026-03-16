@@ -167,11 +167,89 @@ impl LinuxAccessibility {
         )
         .ok()?;
         let value: OwnedValue = proxy.get_property("CurrentValue").ok()?;
-        // downcast_ref returns Result<&T> for zbus OwnedValue
         if let Ok(v) = value.downcast_ref::<f64>() {
             return Some(v.to_string());
         }
         None
+    }
+
+    /// Get the Description property (secondary label / tooltip).
+    fn get_description(&self, dest: &str, path: &str) -> Option<String> {
+        let proxy = zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Accessible",
+        )
+        .ok()?;
+        let value: OwnedValue = proxy.get_property("Description").ok()?;
+        let desc: &str = value.downcast_ref().ok()?;
+        if desc.is_empty() {
+            None
+        } else {
+            Some(desc.to_string())
+        }
+    }
+
+    /// Query the AT-SPI2 StateSet for an element.
+    /// Returns an ElementState with real values from the accessibility API.
+    ///
+    /// AT-SPI2 GetState returns two u32 values that form a 64-bit state bitfield.
+    /// State bits are defined in the AT-SPI2 spec:
+    ///   bit 1  = active,   bit 2  = armed,    bit 4  = checked
+    ///   bit 7  = enabled,  bit 8  = focusable, bit 9  = focused
+    ///   bit 10 = has_tooltip, bit 17 = selected, bit 20 = showing
+    ///   bit 21 = single_line, bit 25 = visible, bit 27 = expanded
+    ///   bit 28 = collapsed
+    fn get_state(&self, dest: &str, path: &str) -> ElementState {
+        let proxy = match zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Accessible",
+        ) {
+            Ok(p) => p,
+            Err(_) => return ElementState::default_visible(),
+        };
+
+        // GetState returns (u32, u32) — two halves of a 64-bit bitfield
+        let result: Result<Vec<u32>, _> = proxy.call("GetState", &());
+        match result {
+            Ok(state_vec) if state_vec.len() >= 2 => {
+                let bits: u64 = (state_vec[0] as u64) | ((state_vec[1] as u64) << 32);
+                ElementState {
+                    focused:  bits & (1 << 12) != 0,  // STATE_FOCUSED
+                    enabled:  bits & (1 << 7) != 0,    // STATE_ENABLED (also "sensitive")
+                    visible:  bits & (1 << 26) != 0,   // STATE_VISIBLE
+                    selected: bits & (1 << 18) != 0,   // STATE_SELECTED
+                    expanded: if bits & (1 << 9) != 0 { // STATE_EXPANDABLE
+                        Some(bits & (1 << 11) != 0)     // STATE_EXPANDED
+                    } else {
+                        None
+                    },
+                    checked: if bits & (1 << 29) != 0 { // STATE_CHECKABLE
+                        Some(bits & (1 << 3) != 0)       // STATE_CHECKED
+                    } else {
+                        None
+                    },
+                }
+            }
+            Ok(state_vec) if state_vec.len() == 1 => {
+                let bits: u64 = state_vec[0] as u64;
+                ElementState {
+                    focused:  bits & (1 << 12) != 0,
+                    enabled:  bits & (1 << 7) != 0,
+                    visible:  bits & (1 << 26) != 0,
+                    selected: bits & (1 << 18) != 0,
+                    expanded: None,
+                    checked: None,
+                }
+            }
+            _ => {
+                // Fallback: infer visible from bounds
+                ElementState::default_visible()
+            }
+        }
     }
 
     /// Get text content from the Text interface.
@@ -230,14 +308,26 @@ impl LinuxAccessibility {
         idx: usize,
         depth: usize,
         element_count: &mut usize,
+        parent_id: Option<&str>,
     ) -> AccessibilityElement {
         let id = format!("{}-{}", id_prefix, idx);
         let role = self.get_role(dest, path);
-        let label = self.get_name(dest, path);
         let bounds = self.get_bounds(dest, path);
+
+        // Get label from Name, fall back to Description
+        let name = self.get_name(dest, path);
+        let description = self.get_description(dest, path);
+        let label = name.or_else(|| description.clone());
 
         // Try to get value — first from Text interface, then Value interface
         let value = self.get_text(dest, path).or_else(|| self.get_value(dest, path));
+
+        // Query real AT-SPI2 states
+        let mut state = self.get_state(dest, path);
+        // If AT-SPI2 says not visible but we have bounds, trust bounds
+        if !state.visible && bounds.is_some() {
+            state.visible = true;
+        }
 
         *element_count += 1;
 
@@ -257,6 +347,7 @@ impl LinuxAccessibility {
                     ci,
                     depth + 1,
                     element_count,
+                    Some(&id),
                 ));
             }
             children
@@ -264,21 +355,15 @@ impl LinuxAccessibility {
             vec![]
         };
 
-        let visible = bounds.is_some();
         AccessibilityElement {
             id,
             role,
             label,
+            description,
             value,
             bounds,
-            state: ElementState {
-                focused: false,
-                enabled: true,
-                visible,
-                selected: false,
-                expanded: None,
-                checked: None,
-            },
+            state,
+            parent_id: parent_id.map(|s| s.to_string()),
             children,
         }
     }
@@ -308,6 +393,7 @@ impl AccessibilityTree for LinuxAccessibility {
                 idx,
                 1, // depth 1 (root is 0)
                 &mut element_count,
+                Some("root"),
             );
 
             // Override role to Window for top-level apps
@@ -357,6 +443,7 @@ impl AccessibilityTree for LinuxAccessibility {
                         id: "focused".into(),
                         role: ElementRole::Window,
                         label: Some(n),
+                        description: None,
                         value: None,
                         bounds: self.get_bounds(
                             bus_name,
@@ -370,6 +457,7 @@ impl AccessibilityTree for LinuxAccessibility {
                             expanded: None,
                             checked: None,
                         },
+                        parent_id: None,
                         children: vec![],
                     }));
                 }
@@ -422,6 +510,7 @@ fn make_root_element(children: Vec<AccessibilityElement>) -> AccessibilityElemen
         id: "root".into(),
         role: ElementRole::Window,
         label: Some("Desktop".into()),
+        description: None,
         value: None,
         bounds: Some(Bounds {
             x: 0,
@@ -437,6 +526,7 @@ fn make_root_element(children: Vec<AccessibilityElement>) -> AccessibilityElemen
             expanded: None,
             checked: None,
         },
+        parent_id: None,
         children,
     }
 }
@@ -481,6 +571,7 @@ mod tests {
             id: "app-0".into(),
             role: ElementRole::Window,
             label: Some("Firefox".into()),
+            description: None,
             value: None,
             bounds: None,
             state: ElementState {
@@ -491,6 +582,7 @@ mod tests {
                 expanded: None,
                 checked: None,
             },
+            parent_id: None,
             children: vec![],
         };
         let root = make_root_element(vec![child]);
@@ -504,6 +596,7 @@ mod tests {
             id: "root".into(),
             role: ElementRole::Window,
             label: Some("Root".into()),
+            description: None,
             value: None,
             bounds: None,
             state: ElementState {
@@ -514,11 +607,13 @@ mod tests {
                 expanded: None,
                 checked: None,
             },
+            parent_id: None,
             children: vec![
                 AccessibilityElement {
                     id: "btn-1".into(),
                     role: ElementRole::Button,
                     label: Some("OK".into()),
+                    description: None,
                     value: None,
                     bounds: None,
                     state: ElementState {
@@ -529,12 +624,14 @@ mod tests {
                         expanded: None,
                         checked: None,
                     },
+                    parent_id: None,
                     children: vec![],
                 },
                 AccessibilityElement {
                     id: "txt-1".into(),
                     role: ElementRole::Text,
                     label: Some("Hello".into()),
+                    description: None,
                     value: None,
                     bounds: None,
                     state: ElementState {
@@ -545,6 +642,7 @@ mod tests {
                         expanded: None,
                         checked: None,
                     },
+                    parent_id: None,
                     children: vec![],
                 },
             ],
@@ -580,6 +678,7 @@ mod tests {
             id: "btn-1".into(),
             role: ElementRole::Button,
             label: Some("Submit Form".into()),
+            description: None,
             value: None,
             bounds: None,
             state: ElementState {
@@ -590,6 +689,7 @@ mod tests {
                 expanded: None,
                 checked: None,
             },
+            parent_id: None,
             children: vec![],
         }]);
 

@@ -62,6 +62,20 @@ pub struct ElementState {
     pub checked: Option<bool>,
 }
 
+impl ElementState {
+    /// Default state when AT-SPI2 state query fails — assume visible and enabled.
+    pub fn default_visible() -> Self {
+        Self {
+            focused: false,
+            enabled: true,
+            visible: true,
+            selected: false,
+            expanded: None,
+            checked: None,
+        }
+    }
+}
+
 /// A single element in the accessibility tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessibilityElement {
@@ -71,12 +85,16 @@ pub struct AccessibilityElement {
     pub role: ElementRole,
     /// Human-readable label.
     pub label: Option<String>,
+    /// Accessibility description (tooltip / secondary label).
+    pub description: Option<String>,
     /// Current value (for inputs, sliders, etc.).
     pub value: Option<String>,
     /// Screen-space bounding rectangle.
     pub bounds: Option<Bounds>,
     /// Current state flags.
     pub state: ElementState,
+    /// ID of the parent element (None for root).
+    pub parent_id: Option<String>,
     /// Child elements.
     pub children: Vec<AccessibilityElement>,
 }
@@ -107,6 +125,7 @@ impl AccessibilityTree for StubAccessibility {
             id: "root".into(),
             role: ElementRole::Window,
             label: Some("Stub Window".into()),
+            description: None,
             value: None,
             bounds: Some(Bounds { x: 0, y: 0, width: 1920, height: 1080 }),
             state: ElementState {
@@ -117,6 +136,7 @@ impl AccessibilityTree for StubAccessibility {
                 expanded: None,
                 checked: None,
             },
+            parent_id: None,
             children: vec![],
         })
     }

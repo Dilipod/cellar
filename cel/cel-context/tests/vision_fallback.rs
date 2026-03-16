@@ -41,16 +41,20 @@ impl AccessibilityTree for SparseAccessibility {
             id: "root".into(),
             role: ElementRole::Window,
             label: Some("Legacy App".into()),
+            description: None,
             value: None,
             bounds: Some(A11yBounds { x: 0, y: 0, width: 800, height: 600 }),
             state: default_state(),
+            parent_id: None,
             children: vec![AccessibilityElement {
                 id: "title".into(),
                 role: ElementRole::Text,
                 label: Some("Title".into()),
+                description: None,
                 value: None,
                 bounds: Some(A11yBounds { x: 10, y: 10, width: 200, height: 30 }),
                 state: default_state(),
+                parent_id: Some("root".into()),
                 children: vec![],
             }],
         })
@@ -69,9 +73,11 @@ impl AccessibilityTree for SparseAccessibility {
             id: "root".into(),
             role: ElementRole::Window,
             label: Some("Legacy App".into()),
+            description: None,
             value: None,
             bounds: None,
             state: default_state(),
+            parent_id: None,
             children: vec![],
         }))
     }
@@ -86,35 +92,65 @@ impl AccessibilityTree for RichAccessibility {
             id: "root".into(),
             role: ElementRole::Window,
             label: Some("Rich App".into()),
+            description: None,
             value: None,
             bounds: Some(A11yBounds { x: 0, y: 0, width: 1920, height: 1080 }),
             state: default_state(),
+            parent_id: None,
             children: vec![
                 AccessibilityElement {
                     id: "btn-1".into(),
                     role: ElementRole::Button,
                     label: Some("OK".into()),
+                    description: None,
                     value: None,
                     bounds: Some(A11yBounds { x: 100, y: 100, width: 80, height: 30 }),
                     state: default_state(),
+                    parent_id: Some("root".into()),
                     children: vec![],
                 },
                 AccessibilityElement {
                     id: "input-1".into(),
                     role: ElementRole::Input,
                     label: Some("Name".into()),
+                    description: None,
                     value: Some("John".into()),
                     bounds: Some(A11yBounds { x: 100, y: 150, width: 200, height: 30 }),
                     state: default_state(),
+                    parent_id: Some("root".into()),
                     children: vec![],
                 },
                 AccessibilityElement {
                     id: "link-1".into(),
                     role: ElementRole::Link,
                     label: Some("Help".into()),
+                    description: None,
                     value: None,
                     bounds: Some(A11yBounds { x: 100, y: 200, width: 60, height: 20 }),
                     state: default_state(),
+                    parent_id: Some("root".into()),
+                    children: vec![],
+                },
+                AccessibilityElement {
+                    id: "checkbox-1".into(),
+                    role: ElementRole::Checkbox,
+                    label: Some("Remember me".into()),
+                    description: None,
+                    value: None,
+                    bounds: Some(A11yBounds { x: 100, y: 250, width: 120, height: 20 }),
+                    state: default_state(),
+                    parent_id: Some("root".into()),
+                    children: vec![],
+                },
+                AccessibilityElement {
+                    id: "btn-2".into(),
+                    role: ElementRole::Button,
+                    label: Some("Cancel".into()),
+                    description: None,
+                    value: None,
+                    bounds: Some(A11yBounds { x: 200, y: 100, width: 80, height: 30 }),
+                    state: default_state(),
+                    parent_id: Some("root".into()),
                     children: vec![],
                 },
             ],
@@ -177,9 +213,11 @@ impl HugeAccessibility {
                 ElementRole::Group
             },
             label: Some(format!("Node {}", prefix)),
+            description: None,
             value: None,
             bounds: Some(A11yBounds { x: 0, y: 0, width: 100, height: 30 }),
             state: default_state(),
+            parent_id: None,
             children,
         }
     }
@@ -651,6 +689,7 @@ fn test_deep_tree_does_not_stack_overflow() {
                 id: "leaf".into(),
                 role: ElementRole::Button,
                 label: Some("Deep Button".into()),
+                description: None,
                 value: None,
                 bounds: None,
                 state: ElementState {
@@ -661,6 +700,7 @@ fn test_deep_tree_does_not_stack_overflow() {
                     expanded: None,
                     checked: None,
                 },
+                parent_id: None,
                 children: vec![],
             };
             for i in 0..300 {
@@ -668,6 +708,7 @@ fn test_deep_tree_does_not_stack_overflow() {
                     id: format!("level-{}", i),
                     role: ElementRole::Group,
                     label: None,
+                    description: None,
                     value: None,
                     bounds: None,
                     state: ElementState {
@@ -678,6 +719,7 @@ fn test_deep_tree_does_not_stack_overflow() {
                         expanded: None,
                         checked: None,
                     },
+                    parent_id: None,
                     children: vec![current],
                 };
             }
@@ -718,6 +760,7 @@ fn test_empty_tree_produces_valid_context() {
                 id: "root".into(),
                 role: ElementRole::Window,
                 label: None,
+                description: None,
                 value: None,
                 bounds: None,
                 state: ElementState {
@@ -728,6 +771,7 @@ fn test_empty_tree_produces_valid_context() {
                     expanded: None,
                     checked: None,
                 },
+                parent_id: None,
                 children: vec![],
             })
         }
