@@ -1,20 +1,20 @@
 # Cellar Test Inventory
 
-> 355 tests across 3 layers — Rust, TypeScript unit, and Playwright E2E.
+> 393 tests across 3 layers — Rust, TypeScript unit, and Playwright E2E.
 
 ## Quick Reference
 
 | Layer | Framework | Tests | Command |
 |-------|-----------|------:|---------|
-| Rust unit + integration | `cargo test` | 178 | `make test-rust` |
+| Rust unit + integration | `cargo test` | 196 | `make test-rust` |
 | TypeScript unit | vitest | 125 | `make test-ts` |
-| Playwright E2E | Playwright | 52 | `make test-e2e` |
-| Playwright E2E (full, with browser) | Playwright | 67 | `make test-e2e-ui` |
-| **Total** | | **355** (or 370 with browser tests) | `make test` + `make test-e2e` |
+| Playwright E2E | Playwright | 72 | `make test-e2e` |
+| Playwright E2E (full, with browser) | Playwright | 87 | `make test-e2e-ui` |
+| **Total** | | **393** (or 408 with browser tests) | `make test` + `make test-e2e` |
 
 ---
 
-## 1. Rust Unit Tests (178 tests)
+## 1. Rust Unit & Integration Tests (196 tests)
 
 ### cel-accessibility (16 tests)
 
@@ -247,6 +247,33 @@
 
 **adapter-sap-gui (6 tests):** `test_adapter_info`, `test_not_available`, `test_connect_fails`, `test_disconnect_ok`, `test_get_elements_empty`, `test_execute_action_fails`
 
+### cel-context Integration Tests (18 tests) — `tests/vision_fallback.rs`
+
+Mock-driven integration tests exercising the full ContextMerger with VisionProvider fallback:
+
+| Test | What It Validates |
+|------|-------------------|
+| `test_vision_fallback_triggers_on_sparse_a11y` | Vision called when <3 actionable elements |
+| `test_vision_fallback_does_not_trigger_on_rich_a11y` | Vision NOT called when ≥3 actionable |
+| `test_vision_elements_have_correct_source` | Vision elements tagged with `vision` source |
+| `test_vision_fallback_deduplicates_overlapping` | IoU >0.5 elements deduplicated |
+| `test_vision_fallback_keeps_non_overlapping` | Non-overlapping vision elements kept |
+| `test_vision_fallback_graceful_on_capture_failure` | Capture fails → a11y-only, no panic |
+| `test_vision_fallback_graceful_on_vision_api_failure` | Vision API fails → a11y-only |
+| `test_empty_vision_result_no_panic` | Empty vision response handled |
+| `test_garbage_vision_output_deduplicated` | 100 overlapping elements → reduced to <10 |
+| `test_a11y_failure_still_produces_context_with_vision_fallback` | A11y fails → vision kicks in |
+| `test_both_a11y_and_vision_fail` | Both fail → empty elements, no panic |
+| `test_vision_elements_merged_with_correct_confidence` | Vision confidence preserved |
+| `test_actionable_type_counting` | Only buttons/inputs/links/checkboxes count |
+| `test_exactly_threshold_elements_no_vision` | Exactly 3 actionable → no fallback |
+| `test_vision_fallback_with_no_display` | No display → graceful degradation |
+| `test_huge_tree_flattening_performance` | 3906 elements flattened in <1s |
+| `test_deep_tree_does_not_stack_overflow` | 300 levels deep, no overflow |
+| `test_concurrent_context_calls` | Multiple get_context() calls are safe |
+
+Mock implementations: `SparseAccessibility`, `RichAccessibility`, `FailingAccessibility`, `HugeAccessibility`, `MockCapture`, `FailingCapture`, `MockVision`, `FailingVision`, `EmptyVision`, `GarbageVision`
+
 ---
 
 ## 2. TypeScript Unit Tests (125 tests)
@@ -348,7 +375,7 @@
 
 ---
 
-## 3. Playwright E2E Tests (52 headless + 15 browser)
+## 3. Playwright E2E Tests (72 headless + 15 browser)
 
 ### agent-engine (10 tests)
 
@@ -427,6 +454,63 @@
 
 **Lifecycle (3 tests):** stop() closes connections, works without callbacks, broadcastContext without capture.
 
+### adversarial (20 tests)
+
+**Stress: Large Element Counts (3 tests):**
+
+| Test | What It Validates |
+|------|-------------------|
+| `context feed handles 10,000-element contexts` | 10K elements processed in <1s |
+| `passive recorder handles burst of 10,000 observations` | 10K observations in <10s, patterns still detected |
+| `explicit recorder handles 1,000 recorded steps` | 1K steps recorded/exported without corruption |
+
+**Edge Case: Empty and Missing Fields (5 tests):**
+
+| Test | What It Validates |
+|------|-------------------|
+| `context with no elements` | Zero elements → "paused" confidence |
+| `context with undefined labels and values` | Null/undefined fields don't crash |
+| `explicit recorder with empty action strings` | Empty string actions recorded |
+| `passive recorder with identical timestamps` | Duplicate timestamps don't break detection |
+| `zero-element context in recorder` | Empty context recorded as valid step |
+
+**Edge Case: Duplicate Element IDs (2 tests):**
+
+| Test | What It Validates |
+|------|-------------------|
+| `context feed handles duplicate element IDs` | Duplicates don't crash, all stored |
+| `explicit recorder picks first element with matching ID` | Deterministic target resolution |
+
+**Stress: Rapid Lifecycle Cycling (3 tests):**
+
+| Test | What It Validates |
+|------|-------------------|
+| `passive recorder survives 100 rapid start/stop cycles` | No state corruption |
+| `explicit recorder survives 100 rapid start/stop cycles` | Clean shutdown after each cycle |
+| `context feed survives rapid recording` | 5K rapid records stable |
+
+**Edge Case: Malformed Actions (2 tests):**
+
+| Test | What It Validates |
+|------|-------------------|
+| `recorder handles actions with special characters` | Emoji, newlines, HTML tags, null bytes |
+| `recorder handles extremely long action strings` | 100K-character action strings |
+
+**Edge Case: Confidence Boundaries (3 tests):**
+
+| Test | What It Validates |
+|------|-------------------|
+| `context feed at exact confidence boundaries` | 0.9, 0.7, 0.5 exact values map correctly |
+| `NaN confidence does not crash` | NaN → graceful handling |
+| `negative confidence does not crash` | Negative values → no panic |
+
+**Serialization Safety (2 tests):**
+
+| Test | What It Validates |
+|------|-------------------|
+| `workflow with special characters serializes to valid JSON` | Quotes, newlines in fields |
+| `context with all sources serializes correctly` | Mixed sources roundtrip JSON |
+
 ---
 
 ## Test Architecture
@@ -434,7 +518,8 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                    E2E (Playwright)                       │
-│  agent-engine · recorder · context-pipeline · live-view  │
+│  agent-engine · recorder · context-pipeline · adversarial│
+│  live-view (browser)                                     │
 ├──────────────────────────────────────────────────────────┤
 │              TypeScript Unit (vitest)                     │
 │  engine · action-executor · context-assembly · queue     │
