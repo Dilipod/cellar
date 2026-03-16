@@ -8,7 +8,8 @@
     "test:all": "playwright test",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
-    "test:report": "playwright show-report"
+    "test:report": "playwright show-report",
+    "test:real": "playwright test --project=real-extraction"
   },
   "devDependencies": {
     "@cellar/agent": "workspace:*",

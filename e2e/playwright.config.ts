@@ -37,5 +37,11 @@ export default defineConfig({
       name: "adversarial",
       testMatch: "adversarial.e2e.ts",
     },
+    {
+      name: "real-extraction",
+      testMatch: "real-extraction.e2e.ts",
+      timeout: 600_000,       // 10 min total for 100+ scenarios
+      retries: 0,             // No retries — flakiness indicates real issues
+    },
   ],
 });
