@@ -3,12 +3,15 @@
 //! Bridges platform accessibility APIs into a unified element tree.
 //! - Windows: UI Automation (requires `uiautomation` crate — added when targeting Windows)
 //! - macOS: AXUIElement (requires `objc2` + `core-foundation` — added when targeting macOS)
-//! - Linux: Stub (AT-SPI2 support planned)
+//! - Linux: AT-SPI2 via D-Bus
 //!
 //! The tree types and trait are platform-agnostic. Platform implementations
-//! are added as the target OS supports them.
+//! are selected at compile time based on the target OS.
 
 mod tree;
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 pub use tree::{
     AccessibilityElement, AccessibilityError, AccessibilityTree, Bounds, ElementRole, ElementState,
@@ -17,9 +20,16 @@ pub use tree::{
 
 /// Create a platform-appropriate accessibility tree provider.
 pub fn create_tree() -> Box<dyn AccessibilityTree> {
-    // TODO: On Windows, return WindowsAccessibility (UIA)
-    // TODO: On macOS, return MacAccessibility (AXUIElement)
-    // For now, return stub on all platforms
+    #[cfg(target_os = "linux")]
+    {
+        match linux::LinuxAccessibility::new() {
+            Ok(provider) => return Box::new(provider),
+            Err(e) => {
+                tracing::warn!("AT-SPI2 not available, falling back to stub: {}", e);
+            }
+        }
+    }
+    // Fallback for all platforms where native a11y isn't available
     Box::new(StubAccessibility)
 }
 
@@ -58,7 +68,8 @@ mod tests {
     fn test_create_tree_returns_working_instance() {
         let tree = create_tree();
         let root = tree.get_tree().unwrap();
-        assert_eq!(root.id, "root");
+        // On Linux with AT-SPI2 or stub, root should exist
+        assert!(!root.id.is_empty());
     }
 
     #[test]
