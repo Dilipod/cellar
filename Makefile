@@ -1,4 +1,4 @@
-.PHONY: build build-rust build-ts test test-rust test-ts lint lint-rust lint-ts clean
+.PHONY: build build-rust build-ts test test-rust test-ts test-e2e lint lint-rust lint-ts clean
 
 build: build-rust build-ts
 
@@ -16,6 +16,12 @@ test-rust:
 
 test-ts:
 	pnpm test
+
+test-e2e:
+	cd e2e && npx playwright test --project=agent-engine --project=recorder --project=context-pipeline
+
+test-e2e-ui:
+	cd e2e && npx playwright install chromium && npx playwright test
 
 lint: lint-rust lint-ts
 

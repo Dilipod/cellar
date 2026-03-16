@@ -5,3 +5,4 @@ packages:
   - "registry"
   - "cli"
   - "adapters/browser"
+  - "e2e"
