@@ -3,6 +3,25 @@
 //! Exposes the CEL unified context API to TypeScript via napi-rs.
 
 use napi_derive::napi;
+use std::sync::Mutex;
+
+/// Persistent input controller — avoids creating a new Enigo instance on every call.
+static INPUT_CONTROLLER: std::sync::OnceLock<Mutex<Box<dyn cel_input::InputController>>> =
+    std::sync::OnceLock::new();
+
+fn with_controller<F, R>(f: F) -> napi::Result<R>
+where
+    F: FnOnce(&mut dyn cel_input::InputController) -> Result<R, cel_input::InputError>,
+{
+    let mutex = INPUT_CONTROLLER.get_or_init(|| {
+        let ctrl = cel_input::create_controller().expect("Failed to create input controller");
+        Mutex::new(ctrl)
+    });
+    let mut guard = mutex
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("Controller lock poisoned: {}", e)))?;
+    f(&mut **guard).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
 
 /// Get the CEL runtime version.
 #[napi]
@@ -56,82 +75,52 @@ pub fn list_windows() -> napi::Result<String> {
 /// Move the mouse to absolute screen coordinates.
 #[napi]
 pub fn mouse_move(x: i32, y: i32) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    controller
-        .mouse_move(x, y)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| c.mouse_move(x, y))
 }
 
 /// Click at absolute screen coordinates.
 #[napi]
 pub fn click(x: i32, y: i32) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    controller
-        .click(x, y, cel_input::MouseButton::Left)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| c.click(x, y, cel_input::MouseButton::Left))
 }
 
 /// Right-click at absolute screen coordinates.
 #[napi]
 pub fn right_click(x: i32, y: i32) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    controller
-        .click(x, y, cel_input::MouseButton::Right)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| c.click(x, y, cel_input::MouseButton::Right))
 }
 
 /// Double-click at absolute screen coordinates.
 #[napi]
 pub fn double_click(x: i32, y: i32) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    controller
-        .double_click(x, y, cel_input::MouseButton::Left)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| c.double_click(x, y, cel_input::MouseButton::Left))
 }
 
 /// Type a string of text.
 #[napi]
 pub fn type_text(text: String) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    controller
-        .type_text(&text)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| c.type_text(&text))
 }
 
 /// Press a single key (e.g., "Enter", "Tab", "Escape").
 #[napi]
 pub fn key_press(key: String) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    controller
-        .key_press(&key)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| c.key_press(&key))
 }
 
 /// Press a key combination (e.g., ["Ctrl", "C"]).
 #[napi]
 pub fn key_combo(keys: Vec<String>) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-    controller
-        .key_combo(&key_refs)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| {
+        let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+        c.key_combo(&key_refs)
+    })
 }
 
 /// Scroll at the current position.
 #[napi]
 pub fn scroll(dx: i32, dy: i32) -> napi::Result<()> {
-    let mut controller =
-        cel_input::create_controller().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    controller
-        .scroll(dx, dy)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    with_controller(|c| c.scroll(dx, dy))
 }
 
 /// Query the CEL Store knowledge layer. Returns JSON string.

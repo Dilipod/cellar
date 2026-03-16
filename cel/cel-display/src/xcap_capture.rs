@@ -128,7 +128,6 @@ impl ScreenCapture for XcapCapture {
         let windows = xcap::Window::all().map_err(map_err)?;
         Ok(windows
             .into_iter()
-            .filter(|w| !w.is_minimized().unwrap_or(true))
             .filter_map(|w| {
                 Some(WindowInfo {
                     id: w.id().ok()?,
@@ -138,7 +137,7 @@ impl ScreenCapture for XcapCapture {
                     y: w.y().unwrap_or(0),
                     width: w.width().ok()?,
                     height: w.height().ok()?,
-                    is_minimized: false,
+                    is_minimized: w.is_minimized().unwrap_or(false),
                 })
             })
             .collect())

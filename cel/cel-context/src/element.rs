@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// Re-export Bounds from the accessibility crate — single source of truth.
+pub use cel_accessibility::Bounds;
+
 /// The source that provided a context element.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ContextSource {
@@ -11,15 +14,6 @@ pub enum ContextSource {
     Vision,
     /// Merged from multiple sources.
     Merged,
-}
-
-/// Bounding rectangle in screen coordinates.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bounds {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
 }
 
 /// A single UI element in the unified context model.
@@ -50,6 +44,9 @@ pub struct ScreenContext {
     pub window: String,
     /// All detected UI elements, sorted by confidence (highest first).
     pub elements: Vec<ContextElement>,
+    /// Recent network events (new connections detected since last snapshot).
+    #[serde(default)]
+    pub network_events: Vec<cel_network::NetworkEvent>,
     /// Timestamp of this context snapshot (ms since epoch).
     pub timestamp_ms: u64,
 }
