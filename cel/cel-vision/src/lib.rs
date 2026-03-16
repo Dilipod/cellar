@@ -5,19 +5,20 @@
 //!
 //! Vision is only invoked when the accessibility tree and native APIs
 //! cannot provide sufficient context.
+//!
+//! Uses [`cel_llm::LlmClient`] for all API communication.
 
-mod provider;
 mod openai_compat;
+mod provider;
 
-pub use provider::{VisionBounds, VisionElement, VisionError, VisionProvider, VisionProviderConfig};
+pub use cel_llm::{LlmProviderConfig, ProviderKind};
 pub use openai_compat::OpenAICompatProvider;
+pub use provider::{VisionBounds, VisionElement, VisionError, VisionProvider};
 
 /// Create a vision provider from configuration.
-pub fn create_provider(config: VisionProviderConfig) -> Result<Box<dyn VisionProvider>, VisionError> {
-    match config.provider.as_str() {
-        "openai" | "gemini" | "custom" => Ok(Box::new(OpenAICompatProvider::new(config)?)),
-        "anthropic" | "claude" => Ok(Box::new(OpenAICompatProvider::new(config)?)),
-        "huggingface" => Ok(Box::new(OpenAICompatProvider::new(config)?)),
-        _ => Err(VisionError::NotConfigured),
-    }
+pub fn create_provider(
+    config: LlmProviderConfig,
+) -> Result<Box<dyn VisionProvider>, VisionError> {
+    // All known providers use the OpenAI-compatible chat completions protocol.
+    Ok(Box::new(OpenAICompatProvider::new(config)?))
 }

@@ -12,6 +12,15 @@ pub enum VisionError {
     EncodeFailed(String),
 }
 
+impl From<cel_llm::LlmError> for VisionError {
+    fn from(e: cel_llm::LlmError) -> Self {
+        match e {
+            cel_llm::LlmError::NotConfigured => VisionError::NotConfigured,
+            other => VisionError::ApiFailed(other.to_string()),
+        }
+    }
+}
+
 /// An element detected by the vision model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisionElement {
@@ -31,19 +40,6 @@ pub struct VisionBounds {
     pub y: i32,
     pub width: u32,
     pub height: u32,
-}
-
-/// Configuration for a vision provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VisionProviderConfig {
-    /// Provider type: "gemini", "openai", "anthropic", "huggingface", "custom"
-    pub provider: String,
-    /// API endpoint URL.
-    pub endpoint: Option<String>,
-    /// API key (loaded from env or credential store).
-    pub api_key: Option<String>,
-    /// Model name/ID.
-    pub model: Option<String>,
 }
 
 /// Trait for vision model providers.

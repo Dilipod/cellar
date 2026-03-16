@@ -1,16 +1,15 @@
 [package]
-name = "cel-vision"
+name = "cel-llm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CEL vision layer — multi-provider vision model integration"
+description = "CEL LLM provider layer — unified multi-provider LLM client"
 
 [dependencies]
-cel-display = { workspace = true }
-cel-llm = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+reqwest = { workspace = true }
