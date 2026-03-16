@@ -1,4 +1,4 @@
-.PHONY: build build-rust build-ts test test-rust test-ts test-e2e lint lint-rust lint-ts clean
+.PHONY: build build-rust build-ts test test-rust test-ts test-e2e test-real-extraction lint lint-rust lint-ts clean
 
 build: build-rust build-ts
 
@@ -19,6 +19,10 @@ test-ts:
 
 test-e2e:
 	cd e2e && npx playwright test --project=agent-engine --project=recorder --project=context-pipeline --project=adversarial
+
+test-real-extraction:
+	cargo build -p cel-context --example context_snapshot --release
+	cd e2e && npx playwright test --project=real-extraction
 
 test-e2e-ui:
 	cd e2e && npx playwright install chromium && npx playwright test

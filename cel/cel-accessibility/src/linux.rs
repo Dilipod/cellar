@@ -7,8 +7,9 @@
 use crate::tree::{
     AccessibilityElement, AccessibilityError, AccessibilityTree, Bounds, ElementRole, ElementState,
 };
+use std::os::unix::net::UnixStream;
 use zbus::blocking::Connection;
-use zbus::zvariant::OwnedValue;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
 /// Maximum depth to recurse into the accessibility tree.
 /// Prevents runaway recursion on deeply nested or circular trees.
@@ -25,12 +26,17 @@ pub struct LinuxAccessibility {
 
 impl LinuxAccessibility {
     /// Create a new Linux accessibility provider.
-    /// Checks if AT-SPI2 registry is running on the session bus.
+    /// Connects to the AT-SPI2 accessibility bus (not the session bus).
+    /// The AT-SPI2 bus address is obtained via org.a11y.Bus on the session bus.
     pub fn new() -> Result<Self, AccessibilityError> {
-        let conn = Connection::session()
+        // First connect to session bus to find AT-SPI2 bus address
+        let session_conn = Connection::session()
             .map_err(|e| AccessibilityError::QueryFailed(format!("D-Bus session: {}", e)))?;
 
-        // Verify AT-SPI2 registry is reachable
+        // Connect to the AT-SPI2 accessibility bus
+        let conn = Self::connect_atspi_bus(&session_conn)?;
+
+        // Verify AT-SPI2 registry is reachable on this bus
         let proxy = zbus::blocking::fdo::DBusProxy::new(&conn)
             .map_err(|e| AccessibilityError::QueryFailed(format!("D-Bus proxy: {}", e)))?;
         let names = proxy
@@ -45,6 +51,49 @@ impl LinuxAccessibility {
         }
 
         Ok(Self { conn })
+    }
+
+    /// Get the AT-SPI2 bus address from the session bus via org.a11y.Bus,
+    /// then connect via UnixStream to avoid async runtime requirements.
+    fn connect_atspi_bus(session_conn: &Connection) -> Result<Connection, AccessibilityError> {
+        let proxy = zbus::blocking::Proxy::new(
+            session_conn,
+            "org.a11y.Bus",
+            "/org/a11y/bus",
+            "org.a11y.Bus",
+        )
+        .map_err(|e| AccessibilityError::QueryFailed(format!("a11y bus proxy: {}", e)))?;
+
+        let address: String = proxy.call("GetAddress", &()).map_err(|e| {
+            AccessibilityError::QueryFailed(format!("GetAddress: {}", e))
+        })?;
+
+        if address.is_empty() {
+            return Err(AccessibilityError::Unavailable);
+        }
+
+        // Parse unix:path=/some/path from the address string
+        // Format: "unix:path=/path/to/socket,guid=..."
+        let socket_path = address
+            .split(',')
+            .next()
+            .and_then(|s| s.strip_prefix("unix:path="))
+            .ok_or_else(|| {
+                AccessibilityError::QueryFailed(format!(
+                    "Cannot parse AT-SPI2 bus address: {}",
+                    address
+                ))
+            })?;
+
+        let stream = UnixStream::connect(socket_path).map_err(|e| {
+            AccessibilityError::QueryFailed(format!("Connect AT-SPI2 socket: {}", e))
+        })?;
+
+        zbus::blocking::connection::Builder::unix_stream(stream)
+            .build()
+            .map_err(|e| {
+                AccessibilityError::QueryFailed(format!("AT-SPI2 bus auth: {}", e))
+            })
     }
 
     /// Query the Name property of an accessible object.
@@ -152,12 +201,24 @@ impl LinuxAccessibility {
             "org.a11y.atspi.Accessible",
         ) {
             Ok(p) => p,
-            Err(_) => return vec![],
+            Err(e) => {
+                tracing::trace!("get_children proxy failed for {} {}: {}", dest, path, e);
+                return vec![];
+            }
         };
 
-        // GetChildren returns array of (bus_name, object_path) structs
-        let result: Result<Vec<(String, String)>, _> = proxy.call("GetChildren", &());
-        result.unwrap_or_default()
+        // GetChildren returns array of (bus_name, object_path) D-Bus structs: a(so)
+        let result: Result<Vec<(String, OwnedObjectPath)>, _> = proxy.call("GetChildren", &());
+        match result {
+            Ok(children) => children
+                .into_iter()
+                .map(|(bus, path)| (bus, path.as_str().to_string()))
+                .collect(),
+            Err(e) => {
+                tracing::trace!("GetChildren failed for {} {}: {}", dest, path, e);
+                vec![]
+            }
+        }
     }
 
     /// Recursively build an AccessibilityElement tree from a D-Bus accessible.
@@ -227,6 +288,8 @@ impl AccessibilityTree for LinuxAccessibility {
     fn get_tree(&self) -> Result<AccessibilityElement, AccessibilityError> {
         let children_refs =
             self.get_children("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root");
+
+        tracing::debug!("AT-SPI2 registry children: {}", children_refs.len());
 
         let mut element_count: usize = 0;
         let mut children = Vec::new();
