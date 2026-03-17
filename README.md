@@ -2,59 +2,82 @@
 
 Open source desktop agent runtime — powered by CEL (Context Execution Layer).
 
-> Show Dilipod how to do something once. It does it forever, on its own, while you watch.
+> **Status: Early development (prototype).** The core architecture is functional on Linux. macOS and Windows support, production-hardening, and documentation are in progress. Contributions and feedback welcome.
 
-## What is cellar?
+## The Problem
 
-Cellar provides the runtime layer that makes desktop automation reliable. It works with **any** desktop application — not just browsers — by combining multiple context sources into a unified API that agents can act on with confidence.
+The browser has the DOM — a structured, queryable map of everything on screen. Any tool (screen reader, test framework, AI agent) can ask "what is on this page?" and get a structured answer.
 
-### The problem
+Desktop applications have no equivalent. Accessibility APIs exist but are inconsistently implemented. Vision (screenshots) works everywhere but is slow and imprecise. No single source is reliable across all applications, and there is no open standard that combines them.
 
-Browser automation is the easy case — the DOM gives you structured data for free. Native desktop apps (SAP, Bloomberg, Excel, legacy ERPs) have no equivalent. Accessibility APIs exist but are inconsistently implemented. Vision-only approaches are slow and fragile.
+Every project that needs to understand a desktop screen rebuilds the same brittle solution from scratch.
 
-### The solution: CEL
+## The Solution: CEL
 
-CEL (Context Execution Layer) is a controlled execution environment with five simultaneous context streams:
+CEL (Context Execution Layer) solves this once, for everyone. It fuses multiple context streams into a single unified API with per-element confidence scoring:
 
 | Stream | What it provides |
 |---|---|
-| **Vision** | Continuous screen capture → vision model when needed |
-| **Accessibility tree** | UIA (Windows) / AXUIElement (macOS) structured element tree |
-| **Native API bridge** | App-specific adapters (SAP Scripting, Excel COM, BLPAPI) |
-| **Input layer** | All mouse/keyboard events — injected, intercepted, logged, replayable |
-| **Network layer** | Traffic monitoring for web-based apps and state change detection |
+| **Vision** | Screen capture + vision model analysis |
+| **Accessibility tree** | Platform accessibility APIs (AT-SPI2 on Linux, AXUIElement on macOS, UIA on Windows) |
+| **Native API bridge** | App-specific adapters (Excel COM, SAP Scripting, etc.) |
+| **Input layer** | Mouse/keyboard events — injected, intercepted, logged, replayable |
+| **Network layer** | Traffic monitoring for state change detection |
 
-All streams merge into a **unified context API**. The agent calls `getContext()` and gets a structured world model with confidence scores — regardless of which source provided the data.
+The agent calls `getContext()` and gets a structured world model with confidence scores — regardless of which source provided the data. A fallback chain selects the best available source automatically.
+
+## Current State
+
+**What works:**
+- Unified context API with multi-source fusion and confidence scoring
+- Linux accessibility bridge (AT-SPI2)
+- Screen capture and input injection
+- Vision provider integration (OpenAI, Gemini, Anthropic, custom endpoints)
+- Embedded storage with semantic search (SQLite + FTS5)
+- Workflow execution engine
+- Training/recording system
+- Live view server
+- CLI scaffolding
+- napi-rs bridge (Rust ↔ Node.js)
+
+**In progress:**
+- macOS accessibility bridge (AXUIElement)
+- Production confidence calibration
+- Portable context maps for community sharing
+- First production adapter (Excel COM)
+- Documentation and developer guides
 
 ## Architecture
 
 ```
 cellar/
-  cel/                  ← CEL core (Rust)
+  cel/                  ← CEL core runtime (Rust, Apache 2.0)
     cel-display/        ← screen capture
     cel-input/          ← input injection & interception
-    cel-accessibility/  ← UIA + AXUIElement bridge
+    cel-accessibility/  ← accessibility bridge (AT-SPI2, AXUIElement planned)
     cel-vision/         ← vision model integration
     cel-network/        ← traffic monitoring
-    cel-context/        ← unified context API
-    cel-store/          ← embedded SQLite (memory & knowledge)
-    cel-napi/           ← Node.js native bindings
-  adapters/             ← app-specific adapters
+    cel-context/        ← unified context API + multi-source fusion
+    cel-store/          ← embedded SQLite (memory, knowledge, context maps)
+    cel-llm/            ← LLM provider abstraction
+    cel-napi/           ← Node.js native bindings (napi-rs)
+  adapters/             ← app-specific adapters (stubs)
   agent/                ← workflow execution engine (TypeScript)
   recorder/             ← training: passive observation + explicit record
   live-view/            ← screen stream + context feed server
-  registry/             ← community workflow & adapter registry
+  registry/             ← community workflow & adapter registry (planned)
   cli/                  ← `dilipod` CLI
   box/                  ← dedicated hardware setup
 ```
 
-## Quick Start
+## Getting Started
 
 ### Prerequisites
 
 - Rust 1.75+
 - Node.js 20+
 - pnpm 9+
+- Linux: `libatspi2.0-dev` for accessibility support
 
 ### Build
 
@@ -65,45 +88,42 @@ make build
 # Or separately
 make build-rust    # cargo build --workspace
 make build-ts      # pnpm install && pnpm build
+
+# Run tests
+make test
 ```
 
-### CLI
+### CLI (in development)
 
 ```bash
+dilipod capture            # Capture current screen context
+dilipod context            # Show unified context with confidence scores
 dilipod train              # Enter training mode
 dilipod run <workflow>     # Execute a workflow
-dilipod status             # Show queue and CEL health
-dilipod live-view          # Start local live view
-dilipod adapter install <name>
-dilipod workflow export <name>
 ```
 
-## Dilipod Box
+## Contributing
 
-The Box is cellar pre-installed on dedicated hardware. Same open source runtime, always-on, fully isolated. Ideal for trading ops, regulated environments, and 24/7 automation.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for build instructions, project structure, and conventions.
 
-- Always on — starts on boot, runs headlessly
-- Air-gap capable — no internet required
-- IT-approvable — compliance can audit, data stays on-premise
+We welcome contributions — especially:
+- Accessibility bridge improvements
+- New application adapters
+- Test coverage for platform-specific code
+- Documentation
 
 ## Platform Support
 
 | Platform | Status |
 |---|---|
-| Windows | Supported (UI Automation, Win32, DXGI) |
-| macOS | Supported (AXUIElement, CGEvent, ScreenCaptureKit) |
-| Linux | Development/CI only |
+| Linux | Development + CI (AT-SPI2 accessibility bridge working) |
+| macOS | Planned (AXUIElement bridge in progress) |
+| Windows | Planned (UI Automation bridge designed, not yet implemented) |
 
 ## License
 
 This project uses a split license model:
 
-- **`cel/` (CEL core runtime):** [Apache License 2.0](cel/LICENSE) — fully open source. Use, modify, distribute freely.
-- **Everything else** (agent, cli, box, live-view, recorder, registry): [Business Source License 1.1](LICENSE) — self-host and modify freely; offering as a managed service requires a commercial license. Converts to Apache 2.0 after 4 years.
-- **Adapters:** Community-contributed adapters are MIT licensed.
-
-## Links
-
-- [Dilipod](https://dilipod.com)
-- [Documentation](https://docs.dilipod.com)
-- [Community Registry](https://registry.dilipod.com)
+- **`cel/` (CEL core runtime):** [Apache License 2.0](cel/LICENSE) — fully open source
+- **Everything else** (agent, cli, box, live-view, recorder, registry): [Business Source License 1.1](LICENSE) — free to self-host and modify; converts to Apache 2.0 after 4 years
+- **Adapters:** Community-contributed adapters are MIT licensed
