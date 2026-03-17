@@ -95,6 +95,9 @@ pub struct AccessibilityElement {
     pub state: ElementState,
     /// ID of the parent element (None for root).
     pub parent_id: Option<String>,
+    /// Available actions (from AT-SPI2 Action interface): "click", "press", "activate", etc.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
     /// Child elements.
     pub children: Vec<AccessibilityElement>,
 }
@@ -137,6 +140,7 @@ impl AccessibilityTree for StubAccessibility {
                 checked: None,
             },
             parent_id: None,
+            actions: vec![],
             children: vec![],
         })
     }

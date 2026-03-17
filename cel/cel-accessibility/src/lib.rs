@@ -149,6 +149,7 @@ mod tests {
             },
             description: None,
             parent_id: None,
+            actions: vec![],
             children: vec![],
         };
         let parent = AccessibilityElement {
@@ -163,6 +164,7 @@ mod tests {
             },
             description: None,
             parent_id: None,
+            actions: vec![],
             children: vec![child],
         };
         assert_eq!(parent.children.len(), 1);
@@ -184,6 +186,7 @@ mod tests {
             },
             description: None,
             parent_id: None,
+            actions: vec![],
             children: vec![],
         };
         let json = serde_json::to_string(&elem).unwrap();

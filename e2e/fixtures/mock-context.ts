@@ -187,5 +187,15 @@ function el(
   source: Source,
   bounds?: { x: number; y: number; width: number; height: number },
 ): ContextElement {
-  return { id, label, element_type, confidence, source, bounds };
+  return {
+    id,
+    label,
+    element_type,
+    confidence,
+    source,
+    bounds,
+    description: undefined,
+    state: { focused: false, enabled: true, visible: true, selected: false },
+    parent_id: undefined,
+  };
 }

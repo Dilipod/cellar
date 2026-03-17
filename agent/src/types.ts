@@ -6,13 +6,33 @@ export interface Bounds {
   height: number;
 }
 
+/** Element state flags from the accessibility tree. */
+export interface ElementState {
+  focused: boolean;
+  enabled: boolean;
+  visible: boolean;
+  selected: boolean;
+  /** For expandable elements (trees, accordions). null if not expandable. */
+  expanded?: boolean | null;
+  /** For checkable elements (checkboxes, radio buttons). null if not checkable. */
+  checked?: boolean | null;
+}
+
 /** A single UI element from the unified context API. */
 export interface ContextElement {
   id: string;
   label?: string;
+  /** Accessibility description (tooltip / secondary label). */
+  description?: string;
   element_type: string;
   value?: string;
   bounds?: Bounds;
+  /** Element state flags (focused, enabled, visible, etc.). */
+  state?: ElementState | null;
+  /** ID of the parent element, preserving tree hierarchy. */
+  parent_id?: string | null;
+  /** Available actions from AT-SPI2 Action interface: "click", "press", "activate", etc. */
+  actions?: string[];
   confidence: number;
   source: "accessibility_tree" | "native_api" | "vision" | "merged";
 }
@@ -22,6 +42,16 @@ export interface ScreenContext {
   app: string;
   window: string;
   elements: ContextElement[];
+  network_events?: NetworkEvent[];
+  timestamp_ms: number;
+}
+
+/** A network event captured by the network monitor. */
+export interface NetworkEvent {
+  url: string;
+  method?: string;
+  status?: number;
+  content_type?: string;
   timestamp_ms: number;
 }
 

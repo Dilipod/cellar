@@ -24,6 +24,7 @@ fn test_context_element_serialization() {
         bounds: Some(cel_context::Bounds { x: 100, y: 200, width: 80, height: 30 }),
         state: None,
         parent_id: None,
+        actions: vec![],
         confidence: 0.95,
         source: ContextSource::AccessibilityTree,
     };
@@ -51,6 +52,7 @@ fn test_screen_context_serialization() {
                 bounds: None,
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: 0.9,
                 source: ContextSource::AccessibilityTree,
             },
@@ -63,6 +65,7 @@ fn test_screen_context_serialization() {
                 bounds: None,
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: 0.75,
                 source: ContextSource::Vision,
             },

@@ -105,15 +105,35 @@ impl ContextMerger {
         if actionable_count < VISION_FALLBACK_THRESHOLD {
             if let Some(vision_elements) = self.run_vision_fallback() {
                 for ve in vision_elements {
-                    let dominated = elements.iter().any(|e| {
+                    // Check if an a11y element overlaps this vision element.
+                    // If so, SUPPLEMENT the a11y element with vision bounds (vision often
+                    // sees the actual clickable region more accurately than a11y container bounds).
+                    let overlap_idx = elements.iter().position(|e| {
                         if let (Some(eb), Some(vb)) = (&e.bounds, &ve.bounds) {
                             bounds_overlap(eb, vb) > 0.5
                         } else {
                             false
                         }
                     });
-                    if !dominated {
-                        elements.push(ve);
+                    match overlap_idx {
+                        Some(idx) => {
+                            // Vision has better bounds for the clickable region —
+                            // keep a11y element but upgrade its bounds if vision bounds are smaller
+                            // (more precise). Also boost confidence slightly for cross-source confirmation.
+                            if let (Some(eb), Some(vb)) = (&elements[idx].bounds, &ve.bounds) {
+                                let a11y_area = eb.width as u64 * eb.height as u64;
+                                let vision_area = vb.width as u64 * vb.height as u64;
+                                if vision_area > 0 && vision_area < a11y_area {
+                                    elements[idx].bounds = ve.bounds.clone();
+                                }
+                            }
+                            // Cross-source confirmation: small confidence boost (capped at 0.95)
+                            elements[idx].confidence = (elements[idx].confidence + 0.05).min(0.95);
+                        }
+                        None => {
+                            // No overlap — vision found something a11y missed entirely
+                            elements.push(ve);
+                        }
                     }
                 }
             }
@@ -199,6 +219,7 @@ impl ContextMerger {
                 }),
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: ve.confidence,
                 source: ContextSource::Vision,
             })
@@ -305,6 +326,14 @@ impl ContextMerger {
             height: b.height,
         });
 
+        // Filter out noise: skip elements that are invisible AND have no useful data.
+        // Keep the element if it has children (they might be useful), or if it has a label/value.
+        let has_label = node.label.as_ref().map_or(false, |l| !l.is_empty());
+        let has_value = node.value.as_ref().map_or(false, |v| !v.is_empty());
+        if !node.state.visible && !has_label && !has_value && node.children.is_empty() {
+            return; // Skip invisible leaf elements with no data
+        }
+
         // Smart confidence scoring based on data quality
         let mut confidence: f64 = 0.60;
 
@@ -341,6 +370,7 @@ impl ContextMerger {
             bounds,
             state: Some(node.state.clone()),
             parent_id: node.parent_id.clone(),
+            actions: node.actions.clone(),
             confidence,
             source: ContextSource::AccessibilityTree,
         });
@@ -499,6 +529,7 @@ mod tests {
                 bounds: None,
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: 0.85,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -513,6 +544,7 @@ mod tests {
             bounds: None,
             state: None,
             parent_id: None,
+            actions: vec![],
             confidence: 0.98,
             source: ContextSource::NativeApi,
         }];
@@ -539,6 +571,7 @@ mod tests {
                 bounds: None,
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: 0.85,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -554,6 +587,7 @@ mod tests {
             bounds: Some(Bounds { x: 120, y: 200, width: 80, height: 20 }),
             state: None,
             parent_id: None,
+            actions: vec![],
             confidence: 0.98,
             source: ContextSource::NativeApi,
         }];
@@ -584,6 +618,7 @@ mod tests {
             bounds: Some(Bounds { x: 500, y: 500, width: 100, height: 40 }),
             state: None,
             parent_id: None,
+            actions: vec![],
             confidence: 0.75,
             source: ContextSource::Vision,
         }];
@@ -609,6 +644,7 @@ mod tests {
                 bounds: Some(Bounds { x: 100, y: 100, width: 80, height: 30 }),
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: 0.85,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -624,6 +660,7 @@ mod tests {
             bounds: Some(Bounds { x: 100, y: 100, width: 80, height: 30 }),
             state: None,
             parent_id: None,
+            actions: vec![],
             confidence: 0.70,
             source: ContextSource::Vision,
         }];
@@ -642,6 +679,7 @@ mod tests {
                 id: "root".into(), label: None, description: None,
                 element_type: "window".into(),
                 value: None, bounds: None, state: None, parent_id: None,
+                actions: vec![],
                 confidence: 0.85, source: ContextSource::AccessibilityTree,
             }],
         };
@@ -651,12 +689,14 @@ mod tests {
                 id: "low".into(), label: None, description: None,
                 element_type: "text".into(),
                 value: None, bounds: None, state: None, parent_id: None,
+                actions: vec![],
                 confidence: 0.50, source: ContextSource::NativeApi,
             },
             ContextElement {
                 id: "high".into(), label: None, description: None,
                 element_type: "button".into(),
                 value: None, bounds: None, state: None, parent_id: None,
+                actions: vec![],
                 confidence: 0.99, source: ContextSource::NativeApi,
             },
         ];
@@ -789,6 +829,7 @@ mod tests {
                 bounds: Some(Bounds { x: 100, y: 200, width: 80, height: 30 }),
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: 0.72,
                 source: ContextSource::Vision,
             },
@@ -801,6 +842,7 @@ mod tests {
                 bounds: Some(Bounds { x: 200, y: 200, width: 80, height: 30 }),
                 state: None,
                 parent_id: None,
+                actions: vec![],
                 confidence: 0.68,
                 source: ContextSource::Vision,
             },
@@ -830,6 +872,7 @@ mod tests {
                 element_type: "button".into(),
                 value: None, bounds: None,
                 state: None, parent_id: None,
+                actions: vec![],
                 confidence: 0.95,
                 source: ContextSource::AccessibilityTree,
             }],
@@ -843,6 +886,7 @@ mod tests {
             element_type: "button".into(),
             value: None, bounds: None,
             state: None, parent_id: None,
+            actions: vec![],
             confidence: 0.80,
             source: ContextSource::NativeApi,
         }];
