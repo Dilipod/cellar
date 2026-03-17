@@ -23,17 +23,19 @@ export function editorContext(
   return {
     app: "VS Code",
     window: `${filename}${modified ? " *" : ""} — VS Code`,
+    // Confidence scoring: 0.60 base + 0.10 label + 0.10 bounds + 0.05 visible+enabled + 0.05 actionable = 0.90
+    // Non-actionable (menu, tree_view, status_bar): 0.85. Actionable (button, input, link, tab_item): 0.90
     elements: [
-      el("menu-file", "File", "menu", 0.95, "accessibility_tree", { x: 0, y: 0, width: 40, height: 30 }),
-      el("menu-edit", "Edit", "menu", 0.95, "accessibility_tree", { x: 40, y: 0, width: 40, height: 30 }),
-      el("menu-view", "View", "menu", 0.95, "accessibility_tree", { x: 80, y: 0, width: 40, height: 30 }),
-      el("btn-run", "Run", "button", 0.92, "accessibility_tree", { x: 500, y: 0, width: 60, height: 30 }),
+      el("menu-file", "File", "menu", 0.85, "accessibility_tree", { x: 0, y: 0, width: 40, height: 30 }),
+      el("menu-edit", "Edit", "menu", 0.85, "accessibility_tree", { x: 40, y: 0, width: 40, height: 30 }),
+      el("menu-view", "View", "menu", 0.85, "accessibility_tree", { x: 80, y: 0, width: 40, height: 30 }),
+      el("btn-run", "Run", "button", 0.90, "accessibility_tree", { x: 500, y: 0, width: 60, height: 30 }),
       el("btn-debug", "Debug", "button", 0.90, "accessibility_tree", { x: 560, y: 0, width: 60, height: 30 }),
-      el("editor-area", filename, "input", 0.88, "accessibility_tree", { x: 0, y: 50, width: 1200, height: 700 }),
+      el("editor-area", filename, "input", 0.90, "accessibility_tree", { x: 0, y: 50, width: 1200, height: 700 }),
       el("sidebar-explorer", "Explorer", "tree_view", 0.85, "accessibility_tree", { x: 0, y: 50, width: 250, height: 700 }),
-      el("tab-main", filename, "tab_item", 0.93, "accessibility_tree", { x: 250, y: 30, width: 120, height: 25 }),
-      el("status-bar", "Ln 42, Col 12", "status_bar", 0.80, "accessibility_tree", { x: 0, y: 770, width: 1200, height: 30 }),
-      el("terminal", "Terminal", "input", 0.75, "accessibility_tree", { x: 0, y: 550, width: 1200, height: 200 }),
+      el("tab-main", filename, "tab_item", 0.90, "accessibility_tree", { x: 250, y: 30, width: 120, height: 25 }),
+      el("status-bar", "Ln 42, Col 12", "status_bar", 0.85, "accessibility_tree", { x: 0, y: 770, width: 1200, height: 30 }),
+      el("terminal", "Terminal", "input", 0.90, "accessibility_tree", { x: 0, y: 550, width: 1200, height: 200 }),
     ],
     timestamp_ms: Date.now(),
   };
@@ -46,21 +48,21 @@ export function browserContext(
   const url = opts.url ?? "https://example.com/login";
   const formVisible = opts.formVisible ?? true;
   const elements: ContextElement[] = [
-    el("nav-back", "Back", "button", 0.95, "accessibility_tree", { x: 10, y: 5, width: 30, height: 30 }),
-    el("nav-forward", "Forward", "button", 0.95, "accessibility_tree", { x: 45, y: 5, width: 30, height: 30 }),
-    el("url-bar", url, "input", 0.97, "accessibility_tree", { x: 100, y: 5, width: 600, height: 30 }),
+    el("nav-back", "Back", "button", 0.90, "accessibility_tree", { x: 10, y: 5, width: 30, height: 30 }),
+    el("nav-forward", "Forward", "button", 0.90, "accessibility_tree", { x: 45, y: 5, width: 30, height: 30 }),
+    el("url-bar", url, "input", 0.90, "accessibility_tree", { x: 100, y: 5, width: 600, height: 30 }),
     el("link-home", "Home", "link", 0.90, "accessibility_tree", { x: 50, y: 60, width: 60, height: 20 }),
     el("link-about", "About", "link", 0.90, "accessibility_tree", { x: 130, y: 60, width: 60, height: 20 }),
-    el("link-contact", "Contact", "link", 0.88, "accessibility_tree", { x: 210, y: 60, width: 80, height: 20 }),
+    el("link-contact", "Contact", "link", 0.90, "accessibility_tree", { x: 210, y: 60, width: 80, height: 20 }),
   ];
 
   if (formVisible) {
     elements.push(
-      el("input-username", "Username", "input", 0.93, "accessibility_tree", { x: 400, y: 200, width: 300, height: 35 }),
-      el("input-password", "Password", "input", 0.93, "accessibility_tree", { x: 400, y: 250, width: 300, height: 35 }),
-      el("btn-login", "Log In", "button", 0.95, "accessibility_tree", { x: 400, y: 300, width: 300, height: 40 }),
-      el("link-forgot", "Forgot password?", "link", 0.85, "accessibility_tree", { x: 400, y: 350, width: 150, height: 20 }),
-      el("chk-remember", "Remember me", "checkbox", 0.88, "accessibility_tree", { x: 400, y: 380, width: 150, height: 20 }),
+      el("input-username", "Username", "input", 0.90, "accessibility_tree", { x: 400, y: 200, width: 300, height: 35 }),
+      el("input-password", "Password", "input", 0.90, "accessibility_tree", { x: 400, y: 250, width: 300, height: 35 }),
+      el("btn-login", "Log In", "button", 0.90, "accessibility_tree", { x: 400, y: 300, width: 300, height: 40 }),
+      el("link-forgot", "Forgot password?", "link", 0.90, "accessibility_tree", { x: 400, y: 350, width: 150, height: 20 }),
+      el("chk-remember", "Remember me", "checkbox", 0.90, "accessibility_tree", { x: 400, y: 380, width: 150, height: 20 }),
     );
   }
 
@@ -78,7 +80,7 @@ export function sparseContext(): ScreenContext {
     app: "Legacy App",
     window: "MainForm",
     elements: [
-      el("title", "Legacy Application", "text", 0.7, "accessibility_tree", { x: 0, y: 0, width: 400, height: 30 }),
+      el("title", "Legacy Application", "text", 0.85, "accessibility_tree", { x: 0, y: 0, width: 400, height: 30 }),
     ],
     timestamp_ms: Date.now(),
   };
@@ -90,7 +92,7 @@ export function visionEnrichedContext(): ScreenContext {
     app: "Legacy App",
     window: "MainForm",
     elements: [
-      el("title", "Legacy Application", "text", 0.7, "accessibility_tree", { x: 0, y: 0, width: 400, height: 30 }),
+      el("title", "Legacy Application", "text", 0.85, "accessibility_tree", { x: 0, y: 0, width: 400, height: 30 }),
       el("vision:0", "Submit", "button", 0.82, "vision", { x: 200, y: 400, width: 100, height: 35 }),
       el("vision:1", "Cancel", "button", 0.78, "vision", { x: 320, y: 400, width: 100, height: 35 }),
       el("vision:2", "Name", "input", 0.75, "vision", { x: 100, y: 200, width: 300, height: 30 }),
@@ -111,12 +113,13 @@ export function sapContext(): ScreenContext {
     app: "SAP Logon",
     window: "SAP Easy Access",
     elements: [
-      el("sap-menu", "Menu", "menu", 0.95, "native_api", { x: 0, y: 0, width: 80, height: 25 }),
-      el("sap-tcode", "Transaction Code", "input", 0.97, "native_api", { x: 100, y: 30, width: 200, height: 25 }),
-      el("sap-execute", "Execute", "button", 0.96, "native_api", { x: 310, y: 30, width: 60, height: 25 }),
-      el("sap-tree", "SAP Menu", "tree_view", 0.90, "native_api", { x: 0, y: 60, width: 300, height: 600 }),
-      el("sap-favorites", "Favorites", "tree_item", 0.88, "native_api", { x: 20, y: 80, width: 200, height: 20 }),
-      el("sap-status", "System: PRD | Client: 100", "status_bar", 0.85, "native_api", { x: 0, y: 680, width: 800, height: 25 }),
+      // Native API elements get 0.98 confidence (direct COM/API access, near-perfect)
+      el("sap-menu", "Menu", "menu", 0.98, "native_api", { x: 0, y: 0, width: 80, height: 25 }),
+      el("sap-tcode", "Transaction Code", "input", 0.98, "native_api", { x: 100, y: 30, width: 200, height: 25 }),
+      el("sap-execute", "Execute", "button", 0.98, "native_api", { x: 310, y: 30, width: 60, height: 25 }),
+      el("sap-tree", "SAP Menu", "tree_view", 0.98, "native_api", { x: 0, y: 60, width: 300, height: 600 }),
+      el("sap-favorites", "Favorites", "tree_item", 0.98, "native_api", { x: 20, y: 80, width: 200, height: 20 }),
+      el("sap-status", "System: PRD | Client: 100", "status_bar", 0.98, "native_api", { x: 0, y: 680, width: 800, height: 25 }),
     ],
     timestamp_ms: Date.now(),
   };

@@ -593,7 +593,7 @@ fn test_vision_fallback_without_runtime_does_nothing() {
 }
 
 #[test]
-fn test_vision_deduplication_drops_overlapping_elements() {
+fn test_vision_supplements_overlapping_a11y_element() {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     // Vision returns element overlapping with the a11y title bounds (10,10 200x30)
@@ -613,9 +613,73 @@ fn test_vision_deduplication_drops_overlapping_elements() {
 
     let ctx = merger.get_context();
 
-    // The overlapping vision element should be dropped (IoU > 0.5 with existing a11y element)
+    // Overlapping vision element should NOT appear as a separate element
     let vision_count = ctx.elements.iter().filter(|e| e.source == ContextSource::Vision).count();
-    assert_eq!(vision_count, 0, "Overlapping vision element should be deduplicated");
+    assert_eq!(vision_count, 0, "Overlapping vision element should be merged into a11y, not added separately");
+
+    // The a11y element should have gotten a confidence boost from cross-source confirmation
+    let title = ctx.elements.iter().find(|e| e.id == "title").unwrap();
+    assert_eq!(title.source, ContextSource::AccessibilityTree);
+    // Should be boosted: original confidence + 0.05
+    assert!(title.confidence > 0.70, "Title confidence should be boosted by cross-source confirmation");
+}
+
+#[test]
+fn test_vision_upgrades_bounds_when_more_precise() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // Vision returns a smaller, more precise bounding box for the same region
+    // A11y title is at (10,10 200x30) = 6000px². Vision sees (15,12 180x26) = 4680px².
+    let precise_vision = vec![VisionElement {
+        label: "Title (precise)".into(),
+        element_type: "text".into(),
+        bounds: Some(VisionBounds { x: 15, y: 12, width: 180, height: 26 }),
+        confidence: 0.7,
+    }];
+
+    let mut merger = ContextMerger::with_display(
+        Box::new(SparseAccessibility),
+        Box::new(MockCapture::new()),
+    )
+    .with_vision(Box::new(MockVision::new(precise_vision)))
+    .with_runtime(rt.handle().clone());
+
+    let ctx = merger.get_context();
+
+    let title = ctx.elements.iter().find(|e| e.id == "title").unwrap();
+    // Bounds should have been upgraded to the more precise vision bounds
+    let b = title.bounds.as_ref().unwrap();
+    assert_eq!(b.x, 15, "Should have vision's more precise x");
+    assert_eq!(b.y, 12, "Should have vision's more precise y");
+    assert_eq!(b.width, 180, "Should have vision's more precise width");
+    assert_eq!(b.height, 26, "Should have vision's more precise height");
+}
+
+#[test]
+fn test_vision_adds_non_overlapping_elements() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // Vision returns element that doesn't overlap any a11y element
+    let new_vision = vec![VisionElement {
+        label: "Hidden Button".into(),
+        element_type: "button".into(),
+        bounds: Some(VisionBounds { x: 500, y: 500, width: 100, height: 35 }),
+        confidence: 0.8,
+    }];
+
+    let mut merger = ContextMerger::with_display(
+        Box::new(SparseAccessibility),
+        Box::new(MockCapture::new()),
+    )
+    .with_vision(Box::new(MockVision::new(new_vision)))
+    .with_runtime(rt.handle().clone());
+
+    let ctx = merger.get_context();
+
+    // Non-overlapping vision element should be added
+    let vision_elems: Vec<_> = ctx.elements.iter().filter(|e| e.source == ContextSource::Vision).collect();
+    assert_eq!(vision_elems.len(), 1, "Non-overlapping vision element should be added");
+    assert_eq!(vision_elems[0].label.as_deref(), Some("Hidden Button"));
 }
 
 // ============================================================================
