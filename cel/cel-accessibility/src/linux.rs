@@ -195,12 +195,14 @@ impl LinuxAccessibility {
     /// Returns an ElementState with real values from the accessibility API.
     ///
     /// AT-SPI2 GetState returns two u32 values that form a 64-bit state bitfield.
-    /// State bits are defined in the AT-SPI2 spec:
-    ///   bit 1  = active,   bit 2  = armed,    bit 4  = checked
-    ///   bit 7  = enabled,  bit 8  = focusable, bit 9  = focused
-    ///   bit 10 = has_tooltip, bit 17 = selected, bit 20 = showing
-    ///   bit 21 = single_line, bit 25 = visible, bit 27 = expanded
-    ///   bit 28 = collapsed
+    /// State bits per AtspiStateType enum (atspi-constants.h):
+    ///   0  = invalid,     1  = active,      2  = armed,       3  = busy
+    ///   4  = checked,     5  = collapsed,   6  = defunct,     7  = editable
+    ///   8  = enabled,     9  = expandable,  10 = expanded,    11 = focusable
+    ///   12 = focused,     13 = has_tooltip,  ...
+    ///   23 = selected,    24 = sensitive,   25 = showing,     ...
+    ///   30 = visible,     31 = manages_descendants
+    ///   41 = checkable    (in second u32, bit 9)
     fn get_state(&self, dest: &str, path: &str) -> ElementState {
         let proxy = match zbus::blocking::Proxy::new(
             &self.conn,
@@ -218,17 +220,17 @@ impl LinuxAccessibility {
             Ok(state_vec) if state_vec.len() >= 2 => {
                 let bits: u64 = (state_vec[0] as u64) | ((state_vec[1] as u64) << 32);
                 ElementState {
-                    focused:  bits & (1 << 12) != 0,  // STATE_FOCUSED
-                    enabled:  bits & (1 << 7) != 0,    // STATE_ENABLED (also "sensitive")
-                    visible:  bits & (1 << 26) != 0,   // STATE_VISIBLE
-                    selected: bits & (1 << 18) != 0,   // STATE_SELECTED
-                    expanded: if bits & (1 << 9) != 0 { // STATE_EXPANDABLE
-                        Some(bits & (1 << 11) != 0)     // STATE_EXPANDED
+                    focused:  bits & (1 << 12) != 0,  // ATSPI_STATE_FOCUSED = 12
+                    enabled:  bits & (1 << 8) != 0,    // ATSPI_STATE_ENABLED = 8
+                    visible:  bits & (1 << 30) != 0,   // ATSPI_STATE_VISIBLE = 30
+                    selected: bits & (1 << 23) != 0,   // ATSPI_STATE_SELECTED = 23
+                    expanded: if bits & (1 << 9) != 0 { // ATSPI_STATE_EXPANDABLE = 9
+                        Some(bits & (1 << 10) != 0)     // ATSPI_STATE_EXPANDED = 10
                     } else {
                         None
                     },
-                    checked: if bits & (1 << 29) != 0 { // STATE_CHECKABLE
-                        Some(bits & (1 << 3) != 0)       // STATE_CHECKED
+                    checked: if bits & (1u64 << 41) != 0 { // ATSPI_STATE_CHECKABLE = 41
+                        Some(bits & (1 << 4) != 0)          // ATSPI_STATE_CHECKED = 4
                     } else {
                         None
                     },
@@ -238,9 +240,9 @@ impl LinuxAccessibility {
                 let bits: u64 = state_vec[0] as u64;
                 ElementState {
                     focused:  bits & (1 << 12) != 0,
-                    enabled:  bits & (1 << 7) != 0,
-                    visible:  bits & (1 << 26) != 0,
-                    selected: bits & (1 << 18) != 0,
+                    enabled:  bits & (1 << 8) != 0,
+                    visible:  bits & (1 << 30) != 0,
+                    selected: bits & (1 << 23) != 0,
                     expanded: None,
                     checked: None,
                 }
