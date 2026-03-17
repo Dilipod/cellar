@@ -70,13 +70,40 @@ fn main() {
                 Some(b) => format!("[{},{} {}x{}]", b.x, b.y, b.width, b.height),
                 None => "(no bounds)".into(),
             };
+            let state_str = match &elem.state {
+                Some(s) => {
+                    let mut flags = Vec::new();
+                    if s.focused { flags.push("focused"); }
+                    if s.enabled { flags.push("enabled"); }
+                    if s.visible { flags.push("visible"); }
+                    if s.selected { flags.push("selected"); }
+                    match s.expanded {
+                        Some(true) => flags.push("expanded"),
+                        Some(false) => flags.push("collapsed"),
+                        None => {}
+                    }
+                    match s.checked {
+                        Some(true) => flags.push("checked"),
+                        Some(false) => flags.push("unchecked"),
+                        None => {}
+                    }
+                    flags.join("|")
+                }
+                None => String::new(),
+            };
+            let parent_str = match &elem.parent_id {
+                Some(p) => format!(" ^{}", truncate(p, 12)),
+                None => String::new(),
+            };
             println!(
-                "  {:>3}. [{:.2}] {:12} {:20} {} {:?}",
+                "  {:>3}. [{:.2}] {:12} {:20} {} {}{} {:?}",
                 i + 1,
                 elem.confidence,
                 elem.element_type,
                 truncate(label, 20),
                 bounds_str,
+                state_str,
+                parent_str,
                 elem.source,
             );
         }

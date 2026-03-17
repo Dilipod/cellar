@@ -46,6 +46,7 @@ impl AccessibilityTree for SparseAccessibility {
             bounds: Some(A11yBounds { x: 0, y: 0, width: 800, height: 600 }),
             state: default_state(),
             parent_id: None,
+            actions: vec![],
             children: vec![AccessibilityElement {
                 id: "title".into(),
                 role: ElementRole::Text,
@@ -55,6 +56,7 @@ impl AccessibilityTree for SparseAccessibility {
                 bounds: Some(A11yBounds { x: 10, y: 10, width: 200, height: 30 }),
                 state: default_state(),
                 parent_id: Some("root".into()),
+                actions: vec![],
                 children: vec![],
             }],
         })
@@ -78,6 +80,7 @@ impl AccessibilityTree for SparseAccessibility {
             bounds: None,
             state: default_state(),
             parent_id: None,
+            actions: vec![],
             children: vec![],
         }))
     }
@@ -97,6 +100,7 @@ impl AccessibilityTree for RichAccessibility {
             bounds: Some(A11yBounds { x: 0, y: 0, width: 1920, height: 1080 }),
             state: default_state(),
             parent_id: None,
+            actions: vec![],
             children: vec![
                 AccessibilityElement {
                     id: "btn-1".into(),
@@ -107,6 +111,7 @@ impl AccessibilityTree for RichAccessibility {
                     bounds: Some(A11yBounds { x: 100, y: 100, width: 80, height: 30 }),
                     state: default_state(),
                     parent_id: Some("root".into()),
+                    actions: vec![],
                     children: vec![],
                 },
                 AccessibilityElement {
@@ -118,6 +123,7 @@ impl AccessibilityTree for RichAccessibility {
                     bounds: Some(A11yBounds { x: 100, y: 150, width: 200, height: 30 }),
                     state: default_state(),
                     parent_id: Some("root".into()),
+                    actions: vec![],
                     children: vec![],
                 },
                 AccessibilityElement {
@@ -129,6 +135,7 @@ impl AccessibilityTree for RichAccessibility {
                     bounds: Some(A11yBounds { x: 100, y: 200, width: 60, height: 20 }),
                     state: default_state(),
                     parent_id: Some("root".into()),
+                    actions: vec![],
                     children: vec![],
                 },
                 AccessibilityElement {
@@ -140,6 +147,7 @@ impl AccessibilityTree for RichAccessibility {
                     bounds: Some(A11yBounds { x: 100, y: 250, width: 120, height: 20 }),
                     state: default_state(),
                     parent_id: Some("root".into()),
+                    actions: vec![],
                     children: vec![],
                 },
                 AccessibilityElement {
@@ -151,6 +159,7 @@ impl AccessibilityTree for RichAccessibility {
                     bounds: Some(A11yBounds { x: 200, y: 100, width: 80, height: 30 }),
                     state: default_state(),
                     parent_id: Some("root".into()),
+                    actions: vec![],
                     children: vec![],
                 },
             ],
@@ -218,6 +227,7 @@ impl HugeAccessibility {
             bounds: Some(A11yBounds { x: 0, y: 0, width: 100, height: 30 }),
             state: default_state(),
             parent_id: None,
+            actions: vec![],
             children,
         }
     }
@@ -701,6 +711,7 @@ fn test_deep_tree_does_not_stack_overflow() {
                     checked: None,
                 },
                 parent_id: None,
+                actions: vec![],
                 children: vec![],
             };
             for i in 0..300 {
@@ -720,6 +731,7 @@ fn test_deep_tree_does_not_stack_overflow() {
                         checked: None,
                     },
                     parent_id: None,
+                    actions: vec![],
                     children: vec![current],
                 };
             }
@@ -772,6 +784,7 @@ fn test_empty_tree_produces_valid_context() {
                     checked: None,
                 },
                 parent_id: None,
+                actions: vec![],
                 children: vec![],
             })
         }

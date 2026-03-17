@@ -36,6 +36,9 @@ pub struct ContextElement {
     pub state: Option<ElementState>,
     /// ID of the parent element (None for root elements).
     pub parent_id: Option<String>,
+    /// Available actions (from AT-SPI2 Action interface): "click", "press", "activate", etc.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
     /// Confidence score (0.0 - 1.0).
     pub confidence: f64,
     /// Which context source provided this element.

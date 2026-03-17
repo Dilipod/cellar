@@ -270,6 +270,38 @@ impl LinuxAccessibility {
         }
     }
 
+    /// Get available actions from the Action interface.
+    /// Returns action names like "click", "press", "activate", "expand or contract".
+    fn get_actions(&self, dest: &str, path: &str) -> Vec<String> {
+        let proxy = match zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Action",
+        ) {
+            Ok(p) => p,
+            Err(_) => return vec![],
+        };
+
+        // Get the number of actions
+        let n_actions: Result<i32, _> = proxy.get_property("NActions");
+        let count = match n_actions {
+            Ok(n) if n > 0 => n as usize,
+            _ => return vec![],
+        };
+
+        let mut actions = Vec::with_capacity(count.min(10));
+        for i in 0..count.min(10) {
+            let result: Result<String, _> = proxy.call("GetName", &(i as i32,));
+            if let Ok(name) = result {
+                if !name.is_empty() {
+                    actions.push(name);
+                }
+            }
+        }
+        actions
+    }
+
     /// Get children of an accessible object as (bus_name, object_path) pairs.
     fn get_children(&self, dest: &str, path: &str) -> Vec<(String, String)> {
         let proxy = match zbus::blocking::Proxy::new(
@@ -322,6 +354,9 @@ impl LinuxAccessibility {
         // Try to get value — first from Text interface, then Value interface
         let value = self.get_text(dest, path).or_else(|| self.get_value(dest, path));
 
+        // Get available actions (click, press, activate, etc.)
+        let actions = self.get_actions(dest, path);
+
         // Query real AT-SPI2 states
         let mut state = self.get_state(dest, path);
         // If AT-SPI2 says not visible but we have bounds, trust bounds
@@ -364,6 +399,7 @@ impl LinuxAccessibility {
             bounds,
             state,
             parent_id: parent_id.map(|s| s.to_string()),
+            actions,
             children,
         }
     }
@@ -458,6 +494,7 @@ impl AccessibilityTree for LinuxAccessibility {
                             checked: None,
                         },
                         parent_id: None,
+                        actions: vec![],
                         children: vec![],
                     }));
                 }
@@ -527,6 +564,7 @@ fn make_root_element(children: Vec<AccessibilityElement>) -> AccessibilityElemen
             checked: None,
         },
         parent_id: None,
+        actions: vec![],
         children,
     }
 }
@@ -583,6 +621,7 @@ mod tests {
                 checked: None,
             },
             parent_id: None,
+            actions: vec![],
             children: vec![],
         };
         let root = make_root_element(vec![child]);
@@ -608,6 +647,7 @@ mod tests {
                 checked: None,
             },
             parent_id: None,
+            actions: vec![],
             children: vec![
                 AccessibilityElement {
                     id: "btn-1".into(),
@@ -625,6 +665,7 @@ mod tests {
                         checked: None,
                     },
                     parent_id: None,
+                    actions: vec![],
                     children: vec![],
                 },
                 AccessibilityElement {
@@ -643,6 +684,7 @@ mod tests {
                         checked: None,
                     },
                     parent_id: None,
+                    actions: vec![],
                     children: vec![],
                 },
             ],
@@ -690,6 +732,7 @@ mod tests {
                 checked: None,
             },
             parent_id: None,
+            actions: vec![],
             children: vec![],
         }]);
 
