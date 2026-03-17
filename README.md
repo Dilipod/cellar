@@ -96,12 +96,11 @@ The Box is cellar pre-installed on dedicated hardware. Same open source runtime,
 
 ## License
 
-[Business Source License 1.1](LICENSE) — same model as GitLab, HashiCorp, MongoDB.
+This project uses a split license model:
 
-- Self-host, modify, build on top: **fully permitted**
-- Contribute adapters (MIT): **encouraged**
-- Offer as a managed service: **requires commercial license**
-- Converts to Apache 2.0 after 4 years
+- **`cel/` (CEL core runtime):** [Apache License 2.0](cel/LICENSE) — fully open source. Use, modify, distribute freely.
+- **Everything else** (agent, cli, box, live-view, recorder, registry): [Business Source License 1.1](LICENSE) — self-host and modify freely; offering as a managed service requires a commercial license. Converts to Apache 2.0 after 4 years.
+- **Adapters:** Community-contributed adapters are MIT licensed.
 
 ## Links
 
