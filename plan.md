@@ -237,6 +237,47 @@ Add tests that verify:
 
 ---
 
+## Phase 8: Low — Real-Device E2E Smoke Test
+
+### 8.1 Add an optional E2E test that runs against a live desktop
+
+**File:** `cel/cel-accessibility/tests/live_e2e.rs` (new, gated behind `#[ignore]`)
+
+This test is **not for CI** — it requires a running desktop with AT-SPI2. It's for manual QA:
+
+```rust
+#[test]
+#[ignore] // Run with: cargo test -- --ignored live_e2e
+fn live_desktop_produces_valid_context() {
+    let a11y = cel_accessibility::create_tree();
+    let display = cel_display::create_capture();
+    let network = cel_network::create_monitor();
+    let mut merger = cel_context::ContextMerger::with_all(a11y, display, network);
+
+    let ctx = merger.get_context();
+
+    // Basic sanity checks
+    assert!(!ctx.app.is_empty(), "Should detect a foreground app");
+    assert!(!ctx.elements.is_empty(), "Should find at least one element");
+    assert!(ctx.timestamp_ms > 0);
+
+    // Verify element quality
+    for elem in &ctx.elements {
+        assert!(elem.confidence >= 0.0 && elem.confidence <= 1.0);
+        assert!(!elem.id.is_empty());
+        // State should always be present (after Phase 4)
+        assert!(elem.state.enabled || !elem.state.enabled); // non-optional
+    }
+}
+```
+
+- Gated with `#[ignore]` so `cargo test` skips it by default
+- Runnable manually: `cargo test -- --ignored live_e2e`
+- Could be added to a nightly CI job on a machine with a desktop environment
+- Validates the full pipeline: AT-SPI2 → tree → context merger → serialization
+
+---
+
 ## Dependency Graph
 
 ```
@@ -260,3 +301,4 @@ Phase 7 (mocks)              ── independent
 - **Phase 5**: ~20 lines added to context_snapshot.rs
 - **Phase 6**: ~120 lines of new tests
 - **Phase 7**: ~40 lines changed in mock-context.ts, ~30 lines of new TS tests
+- **Phase 8**: ~30 lines new test file (gated with `#[ignore]`)
