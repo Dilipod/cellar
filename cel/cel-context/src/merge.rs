@@ -290,19 +290,38 @@ impl ContextMerger {
         });
     }
 
-    /// Merge vision-detected elements as fallback (lower confidence).
+    /// Merge vision-detected elements, supplementing existing elements where they overlap.
+    ///
+    /// When a vision element overlaps an existing element (IoU > 0.5):
+    /// - Upgrades bounds if vision bounds are more precise (smaller area)
+    /// - Boosts confidence by 0.05 for cross-source confirmation
+    /// When no overlap exists, adds the vision element as a new discovery.
     pub fn merge_vision_elements(&self, base: &mut ScreenContext, vision: Vec<ContextElement>) {
         for elem in vision {
-            // Only add if no existing element covers the same area
-            let dominated = base.elements.iter().any(|e| {
+            let overlap_idx = base.elements.iter().position(|e| {
                 if let (Some(eb), Some(vb)) = (&e.bounds, &elem.bounds) {
                     bounds_overlap(eb, vb) > 0.5
                 } else {
                     false
                 }
             });
-            if !dominated {
-                base.elements.push(elem);
+            match overlap_idx {
+                Some(idx) => {
+                    // Supplement: upgrade bounds if vision is more precise
+                    if let (Some(eb), Some(vb)) = (&base.elements[idx].bounds, &elem.bounds) {
+                        let existing_area = eb.width as u64 * eb.height as u64;
+                        let vision_area = vb.width as u64 * vb.height as u64;
+                        if vision_area > 0 && vision_area < existing_area {
+                            base.elements[idx].bounds = elem.bounds.clone();
+                        }
+                    }
+                    // Cross-source confirmation boost
+                    base.elements[idx].confidence =
+                        (base.elements[idx].confidence + 0.05).min(0.95);
+                }
+                None => {
+                    base.elements.push(elem);
+                }
             }
         }
     }
@@ -334,13 +353,27 @@ impl ContextMerger {
             return; // Skip invisible leaf elements with no data
         }
 
+        // Filter offscreen elements: skip elements whose bounds are entirely outside
+        // a reasonable screen area (negative coords or beyond 8K resolution).
+        if let Some(ref b) = bounds {
+            let right = b.x.saturating_add(b.width as i32);
+            let bottom = b.y.saturating_add(b.height as i32);
+            // Element is entirely offscreen if its right edge is <= 0 or bottom edge is <= 0
+            // or its left edge is beyond 8K (7680px) or top edge is beyond 4K (4320px)
+            if right <= 0 || bottom <= 0 || b.x >= 7680 || b.y >= 4320 {
+                // Still recurse into children — they might have different bounds
+                for child in &node.children {
+                    self.flatten_a11y_tree(child, out);
+                }
+                return;
+            }
+        }
+
         // Smart confidence scoring based on data quality
         let mut confidence: f64 = 0.60;
 
         // Has a label or value?
-        if node.label.as_ref().map_or(false, |l| !l.is_empty())
-            || node.value.as_ref().map_or(false, |v| !v.is_empty())
-        {
+        if has_label || has_value {
             confidence += 0.10;
         }
 
@@ -358,6 +391,11 @@ impl ContextMerger {
 
         // Is an actionable type?
         if is_actionable_type(element_type) {
+            confidence += 0.05;
+        }
+
+        // Has declared actions (AT-SPI2 Action interface confirms interactivity)?
+        if !node.actions.is_empty() {
             confidence += 0.05;
         }
 
@@ -628,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_vision_elements_dominated_by_existing() {
+    fn test_merge_vision_supplements_overlapping_element() {
         let stub = Box::new(cel_accessibility::StubAccessibility);
         let merger = ContextMerger::new(stub);
         let mut ctx = ScreenContext {
@@ -651,6 +689,7 @@ mod tests {
             timestamp_ms: 0,
         };
 
+        // Vision element with same bounds — should supplement, not add
         let vision = vec![ContextElement {
             id: "vision:btn:1".into(),
             label: Some("OK".into()),
@@ -666,7 +705,58 @@ mod tests {
         }];
 
         merger.merge_vision_elements(&mut ctx, vision);
+        // Still 1 element (merged, not added)
         assert_eq!(ctx.elements.len(), 1);
+        // Source stays a11y, but confidence boosted
+        assert_eq!(ctx.elements[0].source, ContextSource::AccessibilityTree);
+        assert_eq!(ctx.elements[0].confidence, 0.90, "Should be boosted by 0.05");
+    }
+
+    #[test]
+    fn test_merge_vision_upgrades_to_more_precise_bounds() {
+        let stub = Box::new(cel_accessibility::StubAccessibility);
+        let merger = ContextMerger::new(stub);
+        let mut ctx = ScreenContext {
+            app: "test".into(),
+            window: "test".into(),
+            network_events: vec![],
+            elements: vec![ContextElement {
+                id: "a11y:btn:1".into(),
+                label: Some("OK".into()),
+                description: None,
+                element_type: "button".into(),
+                value: None,
+                bounds: Some(Bounds { x: 100, y: 100, width: 100, height: 50 }), // A11y bounds (slightly larger)
+                state: None,
+                parent_id: None,
+                actions: vec![],
+                confidence: 0.85,
+                source: ContextSource::AccessibilityTree,
+            }],
+            timestamp_ms: 0,
+        };
+
+        // Vision sees smaller, more precise clickable region
+        let vision = vec![ContextElement {
+            id: "vision:btn:1".into(),
+            label: Some("OK".into()),
+            description: None,
+            element_type: "button".into(),
+            value: None,
+            bounds: Some(Bounds { x: 105, y: 105, width: 80, height: 40 }),
+            state: None,
+            parent_id: None,
+            actions: vec![],
+            confidence: 0.70,
+            source: ContextSource::Vision,
+        }];
+
+        merger.merge_vision_elements(&mut ctx, vision);
+        assert_eq!(ctx.elements.len(), 1);
+        // Bounds should be upgraded to the smaller vision bounds
+        let b = ctx.elements[0].bounds.as_ref().unwrap();
+        assert_eq!(b.width, 80);
+        assert_eq!(b.height, 40);
     }
 
     #[test]

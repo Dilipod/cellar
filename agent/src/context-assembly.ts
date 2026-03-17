@@ -16,6 +16,7 @@
 
 import type { Cel, ObservationRecord, ScoredKnowledgeRecord } from "./cel-bindings.js";
 import type {
+  ContextElement,
   Workflow,
   WorkflowStep,
   ScreenContext,
@@ -123,6 +124,50 @@ export function assembleContext(
 }
 
 /**
+ * Find the best element matching a target ID or label, skipping disabled elements.
+ * Uses parent_id hierarchy to prefer direct children of the focused element.
+ */
+export function findActionTarget(
+  screen: ScreenContext,
+  target: string,
+): ContextElement | undefined {
+  const candidates = screen.elements.filter((e) => {
+    // Skip disabled elements
+    if (e.state && !e.state.enabled) return false;
+    // Skip invisible elements
+    if (e.state && !e.state.visible) return false;
+    // Match by ID or label
+    return e.id === target || e.label === target;
+  });
+
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0];
+
+  // Prefer elements with declared actions (confirmed interactive)
+  const withActions = candidates.filter((e) => e.actions && e.actions.length > 0);
+  if (withActions.length === 1) return withActions[0];
+
+  // Fall back to highest confidence
+  return candidates.sort((a, b) => b.confidence - a.confidence)[0];
+}
+
+/**
+ * Validate that an action is feasible given the current screen state.
+ * Returns null if valid, or an error message explaining why not.
+ */
+export function validateAction(
+  screen: ScreenContext,
+  target: string,
+): string | null {
+  const el = findActionTarget(screen, target);
+  if (!el) return `Target "${target}" not found in ${screen.elements.length} elements`;
+  if (el.state && !el.state.enabled) return `Target "${target}" is disabled`;
+  if (el.state && !el.state.visible) return `Target "${target}" is not visible`;
+  if (!el.bounds) return `Target "${target}" has no bounds for click targeting`;
+  return null;
+}
+
+/**
  * Format assembled context into a human-readable summary for logging.
  */
 export function formatContextSummary(ctx: AssembledContext): string {
@@ -130,7 +175,23 @@ export function formatContextSummary(ctx: AssembledContext): string {
   lines.push(`=== Context for step ${ctx.workflow.currentStep + 1}/${ctx.workflow.totalSteps} ===`);
   lines.push(`Workflow: ${ctx.workflow.name} (${ctx.workflow.app})`);
   lines.push(`Step: [${ctx.currentStep.id}] ${ctx.currentStep.description}`);
-  lines.push(`Screen: app="${ctx.screen.app}" window="${ctx.screen.window}" elements=${ctx.screen.elements.length}`);
+
+  // Enriched screen summary using new fields
+  const elems = ctx.screen.elements;
+  const actionable = elems.filter(
+    (e) => e.state?.enabled !== false && e.state?.visible !== false,
+  );
+  const focused = elems.find((e) => e.state?.focused);
+  const withActions = elems.filter((e) => e.actions && e.actions.length > 0);
+
+  lines.push(
+    `Screen: app="${ctx.screen.app}" window="${ctx.screen.window}" ` +
+    `elements=${elems.length} (${actionable.length} actionable, ${withActions.length} with actions)`,
+  );
+
+  if (focused) {
+    lines.push(`Focused: [${focused.id}] ${focused.label ?? "(no label)"} (${focused.element_type})`);
+  }
 
   if (ctx.workingMemory) {
     const lines_count = ctx.workingMemory.split("\n").length;

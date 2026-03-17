@@ -270,6 +270,26 @@ impl LinuxAccessibility {
         }
     }
 
+    /// Get the count of selected children via the Selection interface.
+    /// Returns the number of selected children, or 0 if not a selection container.
+    fn get_selected_count(&self, dest: &str, path: &str) -> usize {
+        let proxy = match zbus::blocking::Proxy::new(
+            &self.conn,
+            dest,
+            path,
+            "org.a11y.atspi.Selection",
+        ) {
+            Ok(p) => p,
+            Err(_) => return 0,
+        };
+
+        let result: Result<i32, _> = proxy.get_property("NSelectedChildren");
+        match result {
+            Ok(n) if n > 0 => n as usize,
+            _ => 0,
+        }
+    }
+
     /// Get available actions from the Action interface.
     /// Returns action names like "click", "press", "activate", "expand or contract".
     fn get_actions(&self, dest: &str, path: &str) -> Vec<String> {
@@ -362,6 +382,15 @@ impl LinuxAccessibility {
         // If AT-SPI2 says not visible but we have bounds, trust bounds
         if !state.visible && bounds.is_some() {
             state.visible = true;
+        }
+
+        // For list/tree containers, check if this element has selected children
+        // (enriches the selected state beyond just the state bitfield)
+        if matches!(role, ElementRole::List | ElementRole::TreeView | ElementRole::Table) {
+            let n_selected = self.get_selected_count(dest, path);
+            if n_selected > 0 {
+                state.selected = true;
+            }
         }
 
         *element_count += 1;

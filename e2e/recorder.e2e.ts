@@ -257,13 +257,13 @@ test.describe("Explicit Recorder", () => {
     recorder.start();
 
     const ctx = browserContext();
-    recorder.recordStep(ctx, "click:btn-login"); // btn-login has confidence 0.95
+    recorder.recordStep(ctx, "click:btn-login"); // btn-login has confidence 0.90
 
     recorder.stop();
     const workflow = recorder.toWorkflow("test", "test");
 
-    // min_confidence = max(0.5, 0.95 - 0.1) = 0.85
-    expect(workflow.steps[0].min_confidence).toBe(0.85);
+    // min_confidence = max(0.5, 0.90 - 0.1) = 0.80
+    expect(workflow.steps[0].min_confidence).toBe(0.80);
   });
 
   test("handles key combo recording", async () => {

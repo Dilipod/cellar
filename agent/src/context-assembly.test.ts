@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { assembleContext, formatContextSummary, type StepResult } from "./context-assembly.js";
-import type { Workflow, ScreenContext } from "./types.js";
+import { assembleContext, formatContextSummary, findActionTarget, validateAction, type StepResult } from "./context-assembly.js";
+import type { Workflow, ScreenContext, ContextElement } from "./types.js";
 
 function makeCel(overrides: Record<string, unknown> = {}) {
   return {
@@ -106,6 +106,106 @@ describe("assembleContext", () => {
     expect(ctx.workingMemory).toBe("");
     expect(ctx.observations).toHaveLength(0);
     expect(ctx.knowledge).toHaveLength(0);
+  });
+});
+
+describe("findActionTarget", () => {
+  function makeEl(overrides: Partial<ContextElement> = {}): ContextElement {
+    return {
+      id: "btn-1",
+      label: "OK",
+      element_type: "button",
+      confidence: 0.90,
+      source: "accessibility_tree",
+      bounds: { x: 100, y: 100, width: 80, height: 30 },
+      state: { focused: false, enabled: true, visible: true, selected: false },
+      ...overrides,
+    };
+  }
+
+  function screenWith(...elements: ContextElement[]): ScreenContext {
+    return { app: "Test", window: "Test", elements, timestamp_ms: Date.now() };
+  }
+
+  it("finds element by ID", () => {
+    const screen = screenWith(makeEl({ id: "btn-1" }));
+    const found = findActionTarget(screen, "btn-1");
+    expect(found).toBeDefined();
+    expect(found!.id).toBe("btn-1");
+  });
+
+  it("finds element by label", () => {
+    const screen = screenWith(makeEl({ id: "btn-1", label: "Submit" }));
+    const found = findActionTarget(screen, "Submit");
+    expect(found).toBeDefined();
+    expect(found!.id).toBe("btn-1");
+  });
+
+  it("skips disabled elements", () => {
+    const screen = screenWith(
+      makeEl({ id: "btn-1", state: { focused: false, enabled: false, visible: true, selected: false } }),
+    );
+    expect(findActionTarget(screen, "btn-1")).toBeUndefined();
+  });
+
+  it("skips invisible elements", () => {
+    const screen = screenWith(
+      makeEl({ id: "btn-1", state: { focused: false, enabled: true, visible: false, selected: false } }),
+    );
+    expect(findActionTarget(screen, "btn-1")).toBeUndefined();
+  });
+
+  it("returns undefined when no match", () => {
+    const screen = screenWith(makeEl({ id: "btn-1" }));
+    expect(findActionTarget(screen, "nonexistent")).toBeUndefined();
+  });
+
+  it("prefers element with actions when multiple match", () => {
+    const screen = screenWith(
+      makeEl({ id: "ok", label: "OK", confidence: 0.90, actions: [] }),
+      makeEl({ id: "ok-2", label: "OK", confidence: 0.85, actions: ["click"] }),
+    );
+    const found = findActionTarget(screen, "OK");
+    expect(found).toBeDefined();
+    expect(found!.id).toBe("ok-2");
+  });
+
+  it("falls back to highest confidence when no actions", () => {
+    const screen = screenWith(
+      makeEl({ id: "ok-low", label: "OK", confidence: 0.70 }),
+      makeEl({ id: "ok-high", label: "OK", confidence: 0.90 }),
+    );
+    const found = findActionTarget(screen, "OK");
+    expect(found!.id).toBe("ok-high");
+  });
+});
+
+describe("validateAction", () => {
+  function screenWith(el: Partial<ContextElement>): ScreenContext {
+    return {
+      app: "Test", window: "Test", timestamp_ms: Date.now(),
+      elements: [{
+        id: "btn-1", label: "OK", element_type: "button",
+        confidence: 0.90, source: "accessibility_tree" as const,
+        bounds: { x: 100, y: 100, width: 80, height: 30 },
+        state: { focused: false, enabled: true, visible: true, selected: false },
+        ...el,
+      }],
+    };
+  }
+
+  it("returns null for valid target", () => {
+    expect(validateAction(screenWith({}), "btn-1")).toBeNull();
+  });
+
+  it("returns error for missing target", () => {
+    const err = validateAction(screenWith({}), "nonexistent");
+    expect(err).toContain("not found");
+  });
+
+  it("returns error for target without bounds", () => {
+    const err = validateAction(screenWith({ bounds: undefined }), "btn-1");
+    expect(err).toContain("no bounds");
   });
 });
 
