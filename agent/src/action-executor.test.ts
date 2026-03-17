@@ -39,6 +39,7 @@ describe("executeAction", () => {
         confidence: 0.95,
         source: "accessibility_tree",
         bounds: { x: 100, y: 200, width: 80, height: 30 },
+        state: { focused: false, enabled: true, visible: true, selected: false },
       },
     ]);
 
@@ -61,6 +62,7 @@ describe("executeAction", () => {
         confidence: 0.9,
         source: "native_api",
         bounds: { x: 50, y: 50, width: 100, height: 20 },
+        state: { focused: false, enabled: true, visible: true, selected: false },
       },
     ]);
 
@@ -96,6 +98,7 @@ describe("executeAction", () => {
         confidence: 0.88,
         source: "accessibility_tree",
         bounds: { x: 200, y: 100, width: 300, height: 30 },
+        state: { focused: false, enabled: true, visible: true, selected: false },
       },
     ]);
 
@@ -189,6 +192,7 @@ describe("executeAction", () => {
         confidence: 0.9,
         source: "accessibility_tree",
         bounds: { x: 400, y: 300, width: 60, height: 30 },
+        state: { focused: false, enabled: true, visible: true, selected: false },
       },
     ]);
 

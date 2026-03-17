@@ -19,6 +19,9 @@ const MAX_TREE_DEPTH: usize = 15;
 /// Keeps tree snapshots bounded in size.
 const MAX_ELEMENTS: usize = 500;
 
+/// Default timeout for D-Bus method calls (prevents agent hangs if AT-SPI2 is slow).
+const DBUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Linux accessibility provider using AT-SPI2 D-Bus interface via zbus.
 pub struct LinuxAccessibility {
     conn: Connection,
@@ -90,6 +93,7 @@ impl LinuxAccessibility {
         })?;
 
         zbus::blocking::connection::Builder::unix_stream(stream)
+            .method_timeout(DBUS_TIMEOUT)
             .build()
             .map_err(|e| {
                 AccessibilityError::QueryFailed(format!("AT-SPI2 bus auth: {}", e))
@@ -99,12 +103,8 @@ impl LinuxAccessibility {
     /// Query the Name property of an accessible object.
     fn get_name(&self, dest: &str, path: &str) -> Option<String> {
         let proxy = zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Accessible",
-        )
-        .ok()?;
+            &self.conn, dest, path, "org.a11y.atspi.Accessible",
+        ).ok()?;
         let value: OwnedValue = proxy.get_property("Name").ok()?;
         let name: &str = value.downcast_ref().ok()?;
         if name.is_empty() {
@@ -117,11 +117,7 @@ impl LinuxAccessibility {
     /// Query the Role of an accessible object via GetRoleName.
     fn get_role(&self, dest: &str, path: &str) -> ElementRole {
         let proxy = match zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Accessible",
-        ) {
+            &self.conn, dest, path, "org.a11y.atspi.Accessible") {
             Ok(p) => p,
             Err(_) => return ElementRole::Custom("unknown".into()),
         };
@@ -136,12 +132,7 @@ impl LinuxAccessibility {
     /// Query the bounding box via the Component interface's GetExtents method.
     fn get_bounds(&self, dest: &str, path: &str) -> Option<Bounds> {
         let proxy = zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Component",
-        )
-        .ok()?;
+            &self.conn, dest, path, "org.a11y.atspi.Component").ok()?;
 
         // GetExtents(coord_type: u32) -> (x, y, width, height)
         // coord_type 0 = screen coordinates
@@ -160,12 +151,7 @@ impl LinuxAccessibility {
     /// Get the Value property (for inputs, sliders, etc.).
     fn get_value(&self, dest: &str, path: &str) -> Option<String> {
         let proxy = zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Value",
-        )
-        .ok()?;
+            &self.conn, dest, path, "org.a11y.atspi.Value").ok()?;
         let value: OwnedValue = proxy.get_property("CurrentValue").ok()?;
         if let Ok(v) = value.downcast_ref::<f64>() {
             return Some(v.to_string());
@@ -176,12 +162,7 @@ impl LinuxAccessibility {
     /// Get the Description property (secondary label / tooltip).
     fn get_description(&self, dest: &str, path: &str) -> Option<String> {
         let proxy = zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Accessible",
-        )
-        .ok()?;
+            &self.conn, dest, path, "org.a11y.atspi.Accessible").ok()?;
         let value: OwnedValue = proxy.get_property("Description").ok()?;
         let desc: &str = value.downcast_ref().ok()?;
         if desc.is_empty() {
@@ -205,11 +186,7 @@ impl LinuxAccessibility {
     ///   41 = checkable    (in second u32, bit 9)
     fn get_state(&self, dest: &str, path: &str) -> ElementState {
         let proxy = match zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Accessible",
-        ) {
+            &self.conn, dest, path, "org.a11y.atspi.Accessible") {
             Ok(p) => p,
             Err(_) => return ElementState::default_visible(),
         };
@@ -257,12 +234,7 @@ impl LinuxAccessibility {
     /// Get text content from the Text interface.
     fn get_text(&self, dest: &str, path: &str) -> Option<String> {
         let proxy = zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Text",
-        )
-        .ok()?;
+            &self.conn, dest, path, "org.a11y.atspi.Text").ok()?;
 
         // GetText(start_offset, end_offset) — use 0, -1 for full text
         let result: Result<String, _> = proxy.call("GetText", &(0i32, -1i32));
@@ -276,11 +248,7 @@ impl LinuxAccessibility {
     /// Returns the number of selected children, or 0 if not a selection container.
     fn get_selected_count(&self, dest: &str, path: &str) -> usize {
         let proxy = match zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Selection",
-        ) {
+            &self.conn, dest, path, "org.a11y.atspi.Selection") {
             Ok(p) => p,
             Err(_) => return 0,
         };
@@ -296,11 +264,7 @@ impl LinuxAccessibility {
     /// Returns action names like "click", "press", "activate", "expand or contract".
     fn get_actions(&self, dest: &str, path: &str) -> Vec<String> {
         let proxy = match zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Action",
-        ) {
+            &self.conn, dest, path, "org.a11y.atspi.Action") {
             Ok(p) => p,
             Err(_) => return vec![],
         };
@@ -324,14 +288,62 @@ impl LinuxAccessibility {
         actions
     }
 
+    /// Recursively search a subtree for the deepest element with STATE_FOCUSED (bit 12).
+    /// Depth-limited to 4 levels and 50 elements to keep the search fast.
+    fn find_focused_in_tree(
+        &self,
+        dest: &str,
+        path: &str,
+        depth: usize,
+    ) -> Option<AccessibilityElement> {
+        const MAX_FOCUSED_DEPTH: usize = 4;
+        const MAX_FOCUSED_ELEMENTS: usize = 50;
+
+        if depth > MAX_FOCUSED_DEPTH {
+            return None;
+        }
+
+        // Check this element's state for STATE_FOCUSED
+        let state = self.get_state(dest, path);
+        let mut found_here = if state.focused {
+            let role = self.get_role(dest, path);
+            let label = self.get_name(dest, path).or_else(|| self.get_description(dest, path));
+            Some(AccessibilityElement {
+                id: format!("focused-{}", depth),
+                role,
+                label,
+                description: self.get_description(dest, path),
+                value: self.get_text(dest, path).or_else(|| self.get_value(dest, path)),
+                bounds: self.get_bounds(dest, path),
+                state: state.clone(),
+                parent_id: None,
+                actions: self.get_actions(dest, path),
+                children: vec![],
+            })
+        } else {
+            None
+        };
+
+        // Search children for a deeper focused element
+        let child_refs = self.get_children(dest, path);
+        for (i, (child_bus, child_path)) in child_refs.iter().enumerate() {
+            if i >= MAX_FOCUSED_ELEMENTS {
+                break;
+            }
+            let child_dest = if child_bus.is_empty() { dest } else { child_bus.as_str() };
+            if let Some(deeper) = self.find_focused_in_tree(child_dest, child_path, depth + 1) {
+                // Prefer the deepest focused element (most specific)
+                found_here = Some(deeper);
+            }
+        }
+
+        found_here
+    }
+
     /// Get children of an accessible object as (bus_name, object_path) pairs.
     fn get_children(&self, dest: &str, path: &str) -> Vec<(String, String)> {
         let proxy = match zbus::blocking::Proxy::new(
-            &self.conn,
-            dest,
-            path,
-            "org.a11y.atspi.Accessible",
-        ) {
+            &self.conn, dest, path, "org.a11y.atspi.Accessible") {
             Ok(p) => p,
             Err(e) => {
                 tracing::trace!("get_children proxy failed for {} {}: {}", dest, path, e);
@@ -484,52 +496,56 @@ impl AccessibilityTree for LinuxAccessibility {
     }
 
     fn focused_element(&self) -> Result<Option<AccessibilityElement>, AccessibilityError> {
-        // Query the registry for the focused application, then find its focused descendant
+        // Recursively search the accessibility tree for the element with STATE_FOCUSED.
+        // Strategy:
+        // 1. Iterate registry children (apps)
+        // 2. For each app, do a shallow depth-limited search for STATE_FOCUSED (bit 12)
+        // 3. Return the deepest focused element found (most specific)
+        // 4. Fall back to first app with a non-empty name if no STATE_FOCUSED found
         let children_refs =
             self.get_children("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root");
 
-        for (bus_name, _obj_path) in &children_refs {
-            let proxy = match zbus::blocking::Proxy::new(
-                &self.conn,
-                bus_name.as_str(),
-                "/org/a11y/atspi/accessible/root",
-                "org.a11y.atspi.Accessible",
-            ) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
+        let mut fallback_app: Option<(String, String)> = None; // (bus_name, app_name)
 
-            // Try to get the focused child via the Accessible interface
-            // Some apps expose a "GetFocusedChild" method or we check state sets
-            let name = self.get_name(bus_name, "/org/a11y/atspi/accessible/root");
-            if let Some(n) = name {
-                if !n.is_empty() {
-                    // Check if this is the active app by trying to query its focused state
-                    let _proxy = proxy; // keep borrow checker happy
-                    return Ok(Some(AccessibilityElement {
-                        id: "focused".into(),
-                        role: ElementRole::Window,
-                        label: Some(n),
-                        description: None,
-                        value: None,
-                        bounds: self.get_bounds(
-                            bus_name,
-                            "/org/a11y/atspi/accessible/root",
-                        ),
-                        state: ElementState {
-                            focused: true,
-                            enabled: true,
-                            visible: true,
-                            selected: false,
-                            expanded: None,
-                            checked: None,
-                        },
-                        parent_id: None,
-                        actions: vec![],
-                        children: vec![],
-                    }));
+        for (bus_name, _obj_path) in &children_refs {
+            let app_path = "/org/a11y/atspi/accessible/root";
+
+            // Remember first app with a name as fallback
+            if fallback_app.is_none() {
+                if let Some(name) = self.get_name(bus_name, app_path) {
+                    if !name.is_empty() {
+                        fallback_app = Some((bus_name.clone(), name));
+                    }
                 }
             }
+
+            // Recursively search this app's tree for STATE_FOCUSED (depth-limited)
+            if let Some(focused) = self.find_focused_in_tree(bus_name, app_path, 0) {
+                return Ok(Some(focused));
+            }
+        }
+
+        // Fallback: return first app with a name (old behavior)
+        if let Some((bus_name, app_name)) = fallback_app {
+            return Ok(Some(AccessibilityElement {
+                id: "focused".into(),
+                role: ElementRole::Window,
+                label: Some(app_name),
+                description: None,
+                value: None,
+                bounds: self.get_bounds(&bus_name, "/org/a11y/atspi/accessible/root"),
+                state: ElementState {
+                    focused: true,
+                    enabled: true,
+                    visible: true,
+                    selected: false,
+                    expanded: None,
+                    checked: None,
+                },
+                parent_id: None,
+                actions: vec![],
+                children: vec![],
+            }));
         }
 
         Ok(None)

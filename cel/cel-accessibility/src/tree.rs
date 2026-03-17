@@ -62,6 +62,21 @@ pub struct ElementState {
     pub checked: Option<bool>,
 }
 
+impl Default for ElementState {
+    /// Default state: all false, expanded/checked = None.
+    /// Used for elements from sources that don't provide state (e.g., vision).
+    fn default() -> Self {
+        Self {
+            focused: false,
+            enabled: false,
+            visible: false,
+            selected: false,
+            expanded: None,
+            checked: None,
+        }
+    }
+}
+
 impl ElementState {
     /// Default state when AT-SPI2 state query fails — assume visible and enabled.
     pub fn default_visible() -> Self {

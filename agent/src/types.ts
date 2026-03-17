@@ -28,7 +28,7 @@ export interface ContextElement {
   value?: string;
   bounds?: Bounds;
   /** Element state flags (focused, enabled, visible, etc.). */
-  state?: ElementState | null;
+  state: ElementState;
   /** ID of the parent element, preserving tree hierarchy. */
   parent_id?: string | null;
   /** Available actions from AT-SPI2 Action interface: "click", "press", "activate", etc. */

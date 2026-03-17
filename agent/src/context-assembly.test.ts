@@ -37,7 +37,7 @@ function makeScreen(): ScreenContext {
     app: "SAP",
     window: "Create PO",
     elements: [
-      { id: "po-btn", element_type: "button", confidence: 0.95, source: "accessibility_tree" },
+      { id: "po-btn", element_type: "button", confidence: 0.95, source: "accessibility_tree", state: { focused: false, enabled: true, visible: true, selected: false } },
     ],
     timestamp_ms: Date.now(),
   };
@@ -224,5 +224,54 @@ describe("formatContextSummary", () => {
     expect(summary).toContain("1 high");
     expect(summary).toContain("1 relevant facts");
     expect(summary).toContain("1/1 succeeded");
+  });
+
+  it("should show actions count when elements have actions", () => {
+    const cel = makeCel();
+    const screen: ScreenContext = {
+      app: "SAP",
+      window: "Create PO",
+      elements: [
+        { id: "btn-1", element_type: "button", confidence: 0.90, source: "accessibility_tree",
+          state: { focused: false, enabled: true, visible: true, selected: false },
+          actions: ["click", "press"] },
+        { id: "btn-2", element_type: "button", confidence: 0.90, source: "accessibility_tree",
+          state: { focused: false, enabled: true, visible: true, selected: false },
+          actions: ["click"] },
+        { id: "txt-1", element_type: "text", confidence: 0.85, source: "accessibility_tree",
+          state: { focused: false, enabled: true, visible: true, selected: false } },
+      ],
+      timestamp_ms: Date.now(),
+    };
+    const ctx = assembleContext(cel, makeWorkflow(), 0, screen, []);
+    const summary = formatContextSummary(ctx);
+    expect(summary).toContain("2 with actions");
+    expect(summary).toContain("3 actionable");
+  });
+
+  it("should show focused element when present", () => {
+    const cel = makeCel();
+    const screen: ScreenContext = {
+      app: "SAP",
+      window: "Create PO",
+      elements: [
+        { id: "input-vendor", label: "Vendor Code", element_type: "input", confidence: 0.90,
+          source: "accessibility_tree",
+          state: { focused: true, enabled: true, visible: true, selected: false } },
+      ],
+      timestamp_ms: Date.now(),
+    };
+    const ctx = assembleContext(cel, makeWorkflow(), 0, screen, []);
+    const summary = formatContextSummary(ctx);
+    expect(summary).toContain("Focused:");
+    expect(summary).toContain("input-vendor");
+    expect(summary).toContain("Vendor Code");
+  });
+
+  it("should not show focused line when no focused element", () => {
+    const cel = makeCel();
+    const ctx = assembleContext(cel, makeWorkflow(), 0, makeScreen(), []);
+    const summary = formatContextSummary(ctx);
+    expect(summary).not.toContain("Focused:");
   });
 });

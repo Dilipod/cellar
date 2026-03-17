@@ -14,6 +14,8 @@ cel-input = { workspace = true }
 cel-accessibility = { workspace = true }
 cel-llm = { workspace = true }
 cel-context = { workspace = true }
+cel-network = { workspace = true }
+cel-vision = { workspace = true }
 cel-store = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

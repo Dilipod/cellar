@@ -60,6 +60,19 @@ fn main() {
         let vision_count = ctx.elements.iter().filter(|e| e.source == cel_context::ContextSource::Vision).count();
         let native_count = ctx.elements.iter().filter(|e| e.source == cel_context::ContextSource::NativeApi).count();
         println!("Sources: {} a11y, {} vision, {} native", a11y_count, vision_count, native_count);
+
+        // Vision fallback indication
+        let actionable_count = ctx.elements.iter()
+            .filter(|e| e.source == cel_context::ContextSource::AccessibilityTree)
+            .filter(|e| matches!(e.element_type.as_str(),
+                "button" | "input" | "link" | "checkbox" | "radio_button" |
+                "combobox" | "menu_item" | "tab_item" | "slider" | "list_item" | "tree_item"))
+            .count();
+        if vision_count > 0 {
+            println!("Vision fallback: YES ({} a11y actionable < 5 threshold)", actionable_count);
+        } else {
+            println!("Vision fallback: NO ({} a11y actionable >= 5 threshold)", actionable_count);
+        }
         println!();
 
         // Print elements (truncated for readability)
@@ -70,33 +83,42 @@ fn main() {
                 Some(b) => format!("[{},{} {}x{}]", b.x, b.y, b.width, b.height),
                 None => "(no bounds)".into(),
             };
-            let state_str = match &elem.state {
-                Some(s) => {
-                    let mut flags = Vec::new();
-                    if s.focused { flags.push("focused"); }
-                    if s.enabled { flags.push("enabled"); }
-                    if s.visible { flags.push("visible"); }
-                    if s.selected { flags.push("selected"); }
-                    match s.expanded {
-                        Some(true) => flags.push("expanded"),
-                        Some(false) => flags.push("collapsed"),
-                        None => {}
-                    }
-                    match s.checked {
-                        Some(true) => flags.push("checked"),
-                        Some(false) => flags.push("unchecked"),
-                        None => {}
-                    }
-                    flags.join("|")
+            let state_str = {
+                let s = &elem.state;
+                let mut flags = Vec::new();
+                if s.focused { flags.push("focused"); }
+                if s.enabled { flags.push("enabled"); }
+                if s.visible { flags.push("visible"); }
+                if s.selected { flags.push("selected"); }
+                match s.expanded {
+                    Some(true) => flags.push("expanded"),
+                    Some(false) => flags.push("collapsed"),
+                    None => {}
                 }
-                None => String::new(),
+                match s.checked {
+                    Some(true) => flags.push("checked"),
+                    Some(false) => flags.push("unchecked"),
+                    None => {}
+                }
+                flags.join("|")
             };
             let parent_str = match &elem.parent_id {
                 Some(p) => format!(" ^{}", truncate(p, 12)),
                 None => String::new(),
             };
+            let desc_str = elem.description.as_deref()
+                .map(|d| format!(" desc={}", truncate(d, 15)))
+                .unwrap_or_default();
+            let value_str = elem.value.as_deref()
+                .map(|v| format!(" val={}", truncate(v, 15)))
+                .unwrap_or_default();
+            let actions_str = if elem.actions.is_empty() {
+                String::new()
+            } else {
+                format!(" actions=[{}]", elem.actions.join(","))
+            };
             println!(
-                "  {:>3}. [{:.2}] {:12} {:20} {} {}{} {:?}",
+                "  {:>3}. [{:.2}] {:12} {:20} {} {}{}{}{}{} {:?}",
                 i + 1,
                 elem.confidence,
                 elem.element_type,
@@ -104,6 +126,9 @@ fn main() {
                 bounds_str,
                 state_str,
                 parent_str,
+                desc_str,
+                value_str,
+                actions_str,
                 elem.source,
             );
         }

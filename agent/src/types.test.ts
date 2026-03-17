@@ -18,6 +18,7 @@ describe("Type definitions", () => {
       confidence: 0.95,
       source: "accessibility_tree",
       bounds: { x: 100, y: 200, width: 80, height: 30 },
+      state: { focused: false, enabled: true, visible: true, selected: false },
     };
     expect(elem.id).toBe("btn-1");
     expect(elem.confidence).toBe(0.95);
@@ -35,6 +36,7 @@ describe("Type definitions", () => {
           value: "Revenue",
           confidence: 0.98,
           source: "native_api",
+          state: { focused: false, enabled: true, visible: true, selected: false },
         },
       ],
       timestamp_ms: Date.now(),
@@ -111,6 +113,7 @@ describe("Type definitions", () => {
       element_type: "text",
       confidence: 0.5,
       source: "vision",
+      state: { focused: false, enabled: true, visible: true, selected: false },
     };
     expect(elem.label).toBeUndefined();
     expect(elem.value).toBeUndefined();

@@ -33,7 +33,9 @@ pub struct ContextElement {
     /// Screen-space bounding rectangle.
     pub bounds: Option<Bounds>,
     /// Current state flags (from accessibility tree).
-    pub state: Option<ElementState>,
+    /// Defaults to all-false for sources that don't provide state (e.g., vision).
+    #[serde(default)]
+    pub state: ElementState,
     /// ID of the parent element (None for root elements).
     pub parent_id: Option<String>,
     /// Available actions (from AT-SPI2 Action interface): "click", "press", "activate", etc.

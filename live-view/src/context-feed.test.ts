@@ -12,6 +12,7 @@ function makeContext(confidence: number): ScreenContext {
         element_type: "button",
         confidence,
         source: "accessibility_tree",
+        state: { focused: false, enabled: true, visible: true, selected: false },
       },
     ],
     timestamp_ms: Date.now(),
