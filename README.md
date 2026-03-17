@@ -1,30 +1,46 @@
 # cellar
 
-Open source desktop agent runtime — powered by CEL (Context Execution Layer).
+Open source computer use runtime — powered by CEL (Context Execution Layer).
 
-> **Status: Early development (prototype).** The core architecture is functional on Linux. macOS and Windows support, production-hardening, and documentation are in progress. Contributions and feedback welcome.
+**CEL is MCP for computer use.** Where MCP gives LLMs structured access to tools, CEL gives agents structured access to what is on screen — and the ability to act on it. One protocol, any OS, any application.
+
+> **Status: Early development (prototype).** Core architecture functional on Linux. macOS and Windows support in progress. Contributions and feedback welcome.
+
+<p align="center">
+  <img src="docs/diagrams/cel-mcp-analogy.png" alt="CEL is MCP for Computer Use" width="700"/>
+</p>
 
 ## The Problem
 
-The browser has the DOM — a structured, queryable map of everything on screen. Any tool (screen reader, test framework, AI agent) can ask "what is on this page?" and get a structured answer.
+Agentic computer use — AI that operates software through the UI — is the defining trend in AI. But it does not work reliably yet.
 
-Desktop applications have no equivalent. Accessibility APIs exist but are inconsistently implemented. Vision (screenshots) works everywhere but is slow and imprecise. No single source is reliable across all applications, and there is no open standard that combines them.
+In browsers, agents have the DOM but still produce unstable results because they depend entirely on LLM interpretation. Outside the browser — on desktop apps, terminals, native software — it's far worse. Agents rely on screenshots alone, feeding pixels to vision models and hoping they correctly identify buttons, fields, and values.
 
-Every project that needs to understand a desktop screen rebuilds the same brittle solution from scratch.
+Meanwhile, rich structured information already exists on every computer: accessibility trees, native application APIs, network traffic, input events. No tool combines these signals into a standard format that any agent can consume.
+
+MCP solved this problem for tool access. **CEL solves it for computer use.**
+
+<p align="center">
+  <img src="docs/diagrams/cel-before-after.png" alt="Computer Use: Today vs With CEL" width="700"/>
+</p>
 
 ## The Solution: CEL
 
-CEL (Context Execution Layer) solves this once, for everyone. It fuses multiple context streams into a single unified API with per-element confidence scoring:
+CEL (Context Execution Layer) is both a context extraction and execution layer. It fuses five streams into a single structured JSON output with per-element confidence scoring:
 
 | Stream | What it provides |
 |---|---|
 | **Vision** | Screen capture + vision model analysis |
-| **Accessibility tree** | Platform accessibility APIs (AT-SPI2 on Linux, AXUIElement on macOS, UIA on Windows) |
+| **Accessibility tree** | Platform APIs (AT-SPI2, AXUIElement, UIA) |
 | **Native API bridge** | App-specific adapters (Excel COM, SAP Scripting, etc.) |
-| **Input layer** | Mouse/keyboard events — injected, intercepted, logged, replayable |
+| **Input layer** | Mouse/keyboard — injected, intercepted, logged, replayable |
 | **Network layer** | Traffic monitoring for state change detection |
 
-The agent calls `getContext()` and gets a structured world model with confidence scores — regardless of which source provided the data. A fallback chain selects the best available source automatically.
+The agent calls `getContext()` and gets structured JSON with confidence scores — regardless of which source provided the data. Then it executes actions through CEL using the same multi-source approach. Workflows become replayable sequences of structured contexts and actions, not brittle screenshot-to-click chains.
+
+Works on any interface: browser, terminal, Finder, Excel, SAP, Bloomberg — any OS, any application.
+
+Unlike screenshot-only approaches that route every action through expensive LLM inference, CEL uses structured sources (accessibility tree, native APIs) first and escalates to vision models only when needed. Faster, cheaper, more predictable — and capable of running fully offline.
 
 ## Current State
 
@@ -48,6 +64,10 @@ The agent calls `getContext()` and gets a structured world model with confidence
 - Documentation and developer guides
 
 ## Architecture
+
+<p align="center">
+  <img src="docs/diagrams/cel-architecture.png" alt="CEL Architecture" width="700"/>
+</p>
 
 ```
 cellar/
