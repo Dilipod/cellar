@@ -21,7 +21,7 @@ function makeContext(): AssembledContext {
     workingMemory: "some memory",
     observations: [{ id: 1, content: "obs", priority: "high", workflow_name: "test", source_run_ids: "[]", observed_at: "", referenced_at: null, superseded_by: null, created_at: "" }],
     knowledge: [{ id: 1, content: "fact", source: "test", workflow_scope: null, score: 0.9, created_at: "" }],
-    screen: { app: "TestApp", window: "Main", elements: [{ id: "btn", element_type: "button", confidence: 0.95, source: "accessibility_tree" }], timestamp_ms: 1000 },
+    screen: { app: "TestApp", window: "Main", elements: [{ id: "btn", element_type: "button", confidence: 0.95, source: "accessibility_tree", state: { focused: false, enabled: true, visible: true, selected: false } }], timestamp_ms: 1000 },
     recentSteps: [],
     currentStep: { id: "s1", description: "Click button", action: { type: "click", target: "btn" } },
   };

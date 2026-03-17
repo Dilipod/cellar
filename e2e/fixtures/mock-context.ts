@@ -26,16 +26,17 @@ export function editorContext(
     // Confidence scoring: 0.60 base + 0.10 label + 0.10 bounds + 0.05 visible+enabled + 0.05 actionable = 0.90
     // Non-actionable (menu, tree_view, status_bar): 0.85. Actionable (button, input, link, tab_item): 0.90
     elements: [
-      el("menu-file", "File", "menu", 0.85, "accessibility_tree", { x: 0, y: 0, width: 40, height: 30 }),
-      el("menu-edit", "Edit", "menu", 0.85, "accessibility_tree", { x: 40, y: 0, width: 40, height: 30 }),
-      el("menu-view", "View", "menu", 0.85, "accessibility_tree", { x: 80, y: 0, width: 40, height: 30 }),
-      el("btn-run", "Run", "button", 0.90, "accessibility_tree", { x: 500, y: 0, width: 60, height: 30 }),
-      el("btn-debug", "Debug", "button", 0.90, "accessibility_tree", { x: 560, y: 0, width: 60, height: 30 }),
-      el("editor-area", filename, "input", 0.90, "accessibility_tree", { x: 0, y: 50, width: 1200, height: 700 }),
+      el("menu-bar", "Menu Bar", "menu", 0.85, "accessibility_tree", { x: 0, y: 0, width: 200, height: 30 }),
+      el("menu-file", "File", "menu", 0.85, "accessibility_tree", { x: 0, y: 0, width: 40, height: 30 }, { parent_id: "menu-bar", actions: ["click"] }),
+      el("menu-edit", "Edit", "menu", 0.85, "accessibility_tree", { x: 40, y: 0, width: 40, height: 30 }, { parent_id: "menu-bar", actions: ["click"] }),
+      el("menu-view", "View", "menu", 0.85, "accessibility_tree", { x: 80, y: 0, width: 40, height: 30 }, { parent_id: "menu-bar", actions: ["click"] }),
+      el("btn-run", "Run", "button", 0.90, "accessibility_tree", { x: 500, y: 0, width: 60, height: 30 }, { actions: ["click", "press"] }),
+      el("btn-debug", "Debug", "button", 0.90, "accessibility_tree", { x: 560, y: 0, width: 60, height: 30 }, { actions: ["click", "press"] }),
+      el("editor-area", filename, "input", 0.90, "accessibility_tree", { x: 0, y: 50, width: 1200, height: 700 }, { focused: true, actions: ["activate", "set"] }),
       el("sidebar-explorer", "Explorer", "tree_view", 0.85, "accessibility_tree", { x: 0, y: 50, width: 250, height: 700 }),
-      el("tab-main", filename, "tab_item", 0.90, "accessibility_tree", { x: 250, y: 30, width: 120, height: 25 }),
+      el("tab-main", filename, "tab_item", 0.90, "accessibility_tree", { x: 250, y: 30, width: 120, height: 25 }, { parent_id: "editor-area", actions: ["click"] }),
       el("status-bar", "Ln 42, Col 12", "status_bar", 0.85, "accessibility_tree", { x: 0, y: 770, width: 1200, height: 30 }),
-      el("terminal", "Terminal", "input", 0.90, "accessibility_tree", { x: 0, y: 550, width: 1200, height: 200 }),
+      el("terminal", "Terminal", "input", 0.90, "accessibility_tree", { x: 0, y: 550, width: 1200, height: 200 }, { actions: ["activate", "set"] }),
     ],
     timestamp_ms: Date.now(),
   };
@@ -48,21 +49,23 @@ export function browserContext(
   const url = opts.url ?? "https://example.com/login";
   const formVisible = opts.formVisible ?? true;
   const elements: ContextElement[] = [
-    el("nav-back", "Back", "button", 0.90, "accessibility_tree", { x: 10, y: 5, width: 30, height: 30 }),
-    el("nav-forward", "Forward", "button", 0.90, "accessibility_tree", { x: 45, y: 5, width: 30, height: 30 }),
-    el("url-bar", url, "input", 0.90, "accessibility_tree", { x: 100, y: 5, width: 600, height: 30 }),
-    el("link-home", "Home", "link", 0.90, "accessibility_tree", { x: 50, y: 60, width: 60, height: 20 }),
-    el("link-about", "About", "link", 0.90, "accessibility_tree", { x: 130, y: 60, width: 60, height: 20 }),
-    el("link-contact", "Contact", "link", 0.90, "accessibility_tree", { x: 210, y: 60, width: 80, height: 20 }),
+    el("nav-bar", "Navigation", "toolbar", 0.85, "accessibility_tree", { x: 0, y: 0, width: 800, height: 40 }),
+    el("nav-back", "Back", "button", 0.90, "accessibility_tree", { x: 10, y: 5, width: 30, height: 30 }, { parent_id: "nav-bar", actions: ["click", "press"] }),
+    el("nav-forward", "Forward", "button", 0.90, "accessibility_tree", { x: 45, y: 5, width: 30, height: 30 }, { parent_id: "nav-bar", actions: ["click", "press"] }),
+    el("url-bar", url, "input", 0.90, "accessibility_tree", { x: 100, y: 5, width: 600, height: 30 }, { parent_id: "nav-bar", focused: true, actions: ["activate", "set"] }),
+    el("link-home", "Home", "link", 0.90, "accessibility_tree", { x: 50, y: 60, width: 60, height: 20 }, { actions: ["jump"] }),
+    el("link-about", "About", "link", 0.90, "accessibility_tree", { x: 130, y: 60, width: 60, height: 20 }, { actions: ["jump"] }),
+    el("link-contact", "Contact", "link", 0.90, "accessibility_tree", { x: 210, y: 60, width: 80, height: 20 }, { actions: ["jump"] }),
   ];
 
   if (formVisible) {
     elements.push(
-      el("input-username", "Username", "input", 0.90, "accessibility_tree", { x: 400, y: 200, width: 300, height: 35 }),
-      el("input-password", "Password", "input", 0.90, "accessibility_tree", { x: 400, y: 250, width: 300, height: 35 }),
-      el("btn-login", "Log In", "button", 0.90, "accessibility_tree", { x: 400, y: 300, width: 300, height: 40 }),
-      el("link-forgot", "Forgot password?", "link", 0.90, "accessibility_tree", { x: 400, y: 350, width: 150, height: 20 }),
-      el("chk-remember", "Remember me", "checkbox", 0.90, "accessibility_tree", { x: 400, y: 380, width: 150, height: 20 }),
+      el("form-login", "Login Form", "group", 0.85, "accessibility_tree", { x: 400, y: 180, width: 300, height: 240 }),
+      el("input-username", "Username", "input", 0.90, "accessibility_tree", { x: 400, y: 200, width: 300, height: 35 }, { parent_id: "form-login", actions: ["activate", "set"] }),
+      el("input-password", "Password", "input", 0.90, "accessibility_tree", { x: 400, y: 250, width: 300, height: 35 }, { parent_id: "form-login", actions: ["activate", "set"] }),
+      el("btn-login", "Log In", "button", 0.90, "accessibility_tree", { x: 400, y: 300, width: 300, height: 40 }, { parent_id: "form-login", actions: ["click", "press"] }),
+      el("link-forgot", "Forgot password?", "link", 0.90, "accessibility_tree", { x: 400, y: 350, width: 150, height: 20 }, { parent_id: "form-login", actions: ["jump"] }),
+      el("chk-remember", "Remember me", "checkbox", 0.90, "accessibility_tree", { x: 400, y: 380, width: 150, height: 20 }, { parent_id: "form-login", actions: ["toggle"] }),
     );
   }
 
@@ -189,6 +192,7 @@ function el(
   confidence: number,
   source: Source,
   bounds?: { x: number; y: number; width: number; height: number },
+  opts?: { parent_id?: string; actions?: string[]; focused?: boolean },
 ): ContextElement {
   return {
     id,
@@ -198,7 +202,13 @@ function el(
     source,
     bounds,
     description: undefined,
-    state: { focused: false, enabled: true, visible: true, selected: false },
-    parent_id: undefined,
+    state: {
+      focused: opts?.focused ?? false,
+      enabled: true,
+      visible: true,
+      selected: false,
+    },
+    parent_id: opts?.parent_id,
+    actions: opts?.actions,
   };
 }

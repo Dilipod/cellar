@@ -31,11 +31,26 @@ pub fn cel_version() -> String {
 
 /// Get the unified screen context — merges all available streams.
 /// Returns JSON string of ScreenContext.
+///
+/// Wires up all available context sources:
+/// - Accessibility tree (always)
+/// - Display / screen capture (always)
+/// - Network monitor (always — drains recent connections)
+/// - Vision provider (optional — reads CEL_LLM_PROVIDER env var)
 #[napi]
 pub fn get_context() -> napi::Result<String> {
     let a11y = cel_accessibility::create_tree();
     let display = cel_display::create_capture();
-    let mut merger = cel_context::ContextMerger::with_display(a11y, display);
+    let network = cel_network::create_monitor();
+    let mut merger = cel_context::ContextMerger::with_all(a11y, display, network);
+
+    // Optionally attach vision provider from env vars
+    if let Ok(vision) = cel_vision::create_provider_from_env() {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| napi::Error::from_reason(format!("Tokio runtime: {}", e)))?;
+        merger = merger.with_vision(vision).with_runtime(rt.handle().clone());
+    }
+
     let context = merger.get_context();
     serde_json::to_string(&context).map_err(|e| napi::Error::from_reason(e.to_string()))
 }

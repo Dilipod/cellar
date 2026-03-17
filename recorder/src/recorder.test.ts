@@ -13,6 +13,7 @@ function makeContext(app = "TestApp", elementCount = 2): ScreenContext {
       label: `Button ${i}`,
       confidence: 0.9,
       source: "accessibility_tree" as const,
+      state: { focused: false, enabled: true, visible: true, selected: false },
     })),
     timestamp_ms: Date.now(),
   };

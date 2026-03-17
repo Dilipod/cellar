@@ -132,10 +132,8 @@ export function findActionTarget(
   target: string,
 ): ContextElement | undefined {
   const candidates = screen.elements.filter((e) => {
-    // Skip disabled elements
-    if (e.state && !e.state.enabled) return false;
-    // Skip invisible elements
-    if (e.state && !e.state.visible) return false;
+    // Skip disabled or invisible elements
+    if (!e.state.enabled || !e.state.visible) return false;
     // Match by ID or label
     return e.id === target || e.label === target;
   });
@@ -161,8 +159,8 @@ export function validateAction(
 ): string | null {
   const el = findActionTarget(screen, target);
   if (!el) return `Target "${target}" not found in ${screen.elements.length} elements`;
-  if (el.state && !el.state.enabled) return `Target "${target}" is disabled`;
-  if (el.state && !el.state.visible) return `Target "${target}" is not visible`;
+  if (!el.state.enabled) return `Target "${target}" is disabled`;
+  if (!el.state.visible) return `Target "${target}" is not visible`;
   if (!el.bounds) return `Target "${target}" has no bounds for click targeting`;
   return null;
 }
@@ -178,10 +176,8 @@ export function formatContextSummary(ctx: AssembledContext): string {
 
   // Enriched screen summary using new fields
   const elems = ctx.screen.elements;
-  const actionable = elems.filter(
-    (e) => e.state?.enabled !== false && e.state?.visible !== false,
-  );
-  const focused = elems.find((e) => e.state?.focused);
+  const actionable = elems.filter((e) => e.state.enabled && e.state.visible);
+  const focused = elems.find((e) => e.state.focused);
   const withActions = elems.filter((e) => e.actions && e.actions.length > 0);
 
   lines.push(
