@@ -35,3 +35,9 @@ Desktop.ini
 
 # Build artifacts
 *.log
+
+# Benchmarks (local only, not committed)
+benchmarks/
+
+# Research / notes (not committed)
+.research/

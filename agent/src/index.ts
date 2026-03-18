@@ -55,3 +55,10 @@ export type {
   PlannerStepRecord,
 } from "./types.js";
 export type { ActionAdapter, AdapterRegistry } from "./action-executor.js";
+export {
+  runGoal,
+  plannedToWorkflowAction,
+  type GoalRunnerConfig,
+  type GoalResult,
+  type GoalRunnerCallbacks,
+} from "./goal-runner.js";

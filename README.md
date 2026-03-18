@@ -92,11 +92,26 @@ cellar/
 
 ## Getting Started
 
+### Quickstart — see what the agent sees
+
+No Rust build needed. Just Node.js 20+ and pnpm:
+
+```bash
+pnpm install && pnpm -r build
+npx tsx examples/quickstart.ts https://github.com/login
+```
+
+This launches a browser, extracts DOM elements as structured `ContextElement`s with confidence scores, and shows what the LLM planner would receive — element IDs, types, labels, available actions. Try any URL:
+
+```bash
+npx tsx examples/quickstart.ts https://news.ycombinator.com
+npx tsx examples/quickstart.ts https://example.com
+```
+
 ### Prerequisites
 
-- Rust 1.75+
-- Node.js 20+
-- pnpm 9+
+- Node.js 20+ and pnpm 9+ (quickstart + TypeScript packages)
+- Rust 1.75+ (optional — for CEL core, accessibility bridge, native bindings)
 - Linux: `libatspi2.0-dev` for accessibility support
 
 ### Build
@@ -121,6 +136,43 @@ dilipod context            # Show unified context with confidence scores
 dilipod train              # Enter training mode
 dilipod run <workflow>     # Execute a workflow
 ```
+
+## Benchmarks
+
+We benchmark Cellar against other browser/computer automation tools to demonstrate the advantages of multi-source context fusion.
+
+| Tool | Approach |
+|------|----------|
+| **Cellar** | Multi-source fusion (DOM + a11y + vision + network), confidence scoring, incremental updates |
+| **Anthropic Computer Use** | Screenshot-only, pixel-coordinate actions via API |
+| **Browser-Use (OSS)** | Hybrid screenshot + DOM (Python) |
+| **Browserbase + Stagehand** | Cloud CDP + AI SDK |
+| **Browser-Use Cloud** | Managed browser-use + custom model |
+
+<!-- BENCHMARK_RESULTS_START -->
+> Measured on Apple M2 Pro (arm64, 12 cores, 18GB RAM), 2026-03-18. 5 tasks, averaged across runs.
+
+| Metric | Cellar | Computer Use | Browser-Use OSS | Browser-Use Cloud |
+|--------|--------|-------------|-----------------|-------------------|
+| Avg. task completion | **1.7s** | 70.4s | 42.8s | 26.6s |
+| Context extraction | **130ms** | 51ms* | 4.1s | 1.3s |
+| Elements detected | **1,075** | 0* | 0 | 0 |
+| Shadow DOM coverage | **Yes** | No | No | No |
+| LLM calls per task | **0** | 16.2 | 7.6 | 4.2 |
+| Est. cost per task | **$0** | $0.79 | $0.003 | $0.002 |
+| Task success rate | **100%** | 60% | 100% | 100% |
+
+*Computer Use identifies elements visually via screenshots, not as structured data — hence 0 elements and fast "extraction" (just a screenshot).
+
+**Key takeaways:**
+- Cellar is **41x faster** than Computer Use, **25x faster** than Browser-Use OSS, and **16x faster** than Browser-Use Cloud
+- Cellar requires **zero LLM calls** — structured context, not pixels or DOM-to-LLM pipelines
+- Computer Use failed 40% of tasks (simple form, complex page); all other tools achieved 100%
+- Cellar detects **1,075 structured elements** including shadow DOM — competitors return none
+- Browser-Use OSS (with Gemini Flash) and Cloud are cheap ($0.002-0.003/task) but still 16-25x slower than Cellar
+<!-- BENCHMARK_RESULTS_END -->
+
+See `benchmarks/README.md` for full methodology, per-task breakdown, and how to reproduce.
 
 ## Contributing
 

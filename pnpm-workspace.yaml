@@ -5,4 +5,6 @@ packages:
   - "registry"
   - "cli"
   - "adapters/browser"
+  - "live-view/dashboard"
   - "e2e"
+  - "benchmarks"

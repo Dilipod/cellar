@@ -1,0 +1,24 @@
+{
+  "name": "@cellar/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CEL Pipeline Dashboard — production monitoring UI",
+  "scripts": {
+    "dev": "next dev -p 6081",
+    "build": "next build",
+    "start": "next start -p 6081"
+  },
+  "dependencies": {
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.0",
+    "tailwindcss": "^4.1.0",
+    "@tailwindcss/postcss": "^4.1.0",
+    "postcss": "^8.5.0"
+  }
+}

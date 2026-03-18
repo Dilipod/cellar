@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+/* Dilipod Design System — Black + Cyan */
+:root {
+  --black: #0A0A0A;
+  --cyan: #00B8A9;
+  --cyan-dark: #007A70;
+  --cyan-light: #00E5D4;
+  --surface: #111111;
+  --surface-2: #1a1a1a;
+  --border: #2a2a2a;
+  --text: #e6edf3;
+  --dim: #8b949e;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --orange: #d18616;
+}
+
+body {
+  background: var(--black);
+  color: var(--text);
+  font-family: "Outfit", system-ui, -apple-system, sans-serif;
+}
+
+/* Glass morphism cards */
+.glass-dark {
+  background: rgba(17, 17, 17, 0.9);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+/* Confidence bars */
+.conf-bar {
+  display: inline-block;
+  height: 4px;
+  border-radius: 2px;
+  min-width: 20px;
+}
+.conf-high { background: var(--green); }
+.conf-med { background: var(--yellow); }
+.conf-low { background: var(--red); }
+
+/* Source dots */
+.dot-dom { background: var(--cyan); }
+.dot-a11y { background: var(--green); }
+.dot-vision { background: var(--purple); }
+.dot-network { background: var(--orange); }
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-live { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+.badge-simulated { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+.badge-cyan { background: rgba(0, 184, 169, 0.15); color: var(--cyan); }

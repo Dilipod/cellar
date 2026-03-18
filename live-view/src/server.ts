@@ -39,14 +39,164 @@ export class LiveViewServer {
   private config: LiveViewConfig;
   private captureTimer: ReturnType<typeof setInterval> | null = null;
 
+  /** Extraction history for the dashboard. */
+  private extractionHistory: Array<Record<string, unknown>> = [];
+
+  /** Execution history for the dashboard. */
+  private executionHistory: Array<Record<string, unknown>> = [];
+
   constructor(config: Partial<LiveViewConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
+  /** SSE clients for the dashboard. */
+  private sseClients: Set<http.ServerResponse> = new Set();
+
+  /** Last snapshot for new SSE connections. */
+  private lastSnapshot: Record<string, unknown> | null = null;
+
+  /** Record an extraction snapshot for history. */
+  recordExtraction(snapshot: Record<string, unknown>): void {
+    this.extractionHistory.push({
+      ...snapshot,
+      _index: this.extractionHistory.length,
+      _recordedAt: Date.now(),
+    });
+    // Keep last 100
+    if (this.extractionHistory.length > 100) {
+      this.extractionHistory = this.extractionHistory.slice(-100);
+    }
+  }
+
+  /** Record an execution run for history. */
+  recordExecution(run: Record<string, unknown>): void {
+    this.executionHistory.push(run);
+    if (this.executionHistory.length > 100) {
+      this.executionHistory = this.executionHistory.slice(-100);
+    }
+  }
+
+  /** Broadcast a snapshot to all SSE clients. */
+  broadcastSSE(data: Record<string, unknown>): void {
+    this.lastSnapshot = data;
+    const payload = `data: ${JSON.stringify({ type: "snapshot", data })}\n\n`;
+    for (const client of this.sseClients) {
+      try {
+        client.write(payload);
+      } catch {
+        this.sseClients.delete(client);
+      }
+    }
+  }
+
   /** Start the live view server with capture and context callbacks. */
   start(captureScreen?: CaptureCallback, getContext?: ContextCallback): void {
-    // HTTP server for the web UI
-    this.httpServer = http.createServer((_req, res) => {
+    // HTTP server with REST API + WebSocket
+    this.httpServer = http.createServer((req, res) => {
+      const url = new URL(req.url || "/", `http://localhost:${this.config.port}`);
+
+      // CORS headers for dashboard
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      // SSE endpoint for live updates
+      if (url.pathname === "/api/events") {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        });
+        this.sseClients.add(res);
+        if (this.lastSnapshot) {
+          res.write(`data: ${JSON.stringify({ type: "snapshot", data: this.lastSnapshot })}\n\n`);
+        }
+        req.on("close", () => this.sseClients.delete(res));
+        return;
+      }
+
+      // Stats endpoint (returns last snapshot)
+      if (url.pathname === "/api/stats" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(this.lastSnapshot || {}));
+        return;
+      }
+
+      // Extraction history
+      if (url.pathname === "/api/extractions" && req.method === "GET") {
+        const summary = this.extractionHistory.map((e, i) => ({
+          index: i,
+          url: e.url,
+          timestamp: e._recordedAt,
+          totalElements: (e.stats as Record<string, unknown>)?.totalElements ?? 0,
+          extractionMs: (e.stats as Record<string, unknown>)?.extractionMs ?? 0,
+          sources: {
+            dom: ((e.sources as Record<string, Record<string, unknown>>)?.dom?.elements as unknown[])?.length ?? 0,
+            a11y: ((e.sources as Record<string, Record<string, unknown>>)?.accessibility?.elements as unknown[])?.length ?? 0,
+            vision: ((e.sources as Record<string, Record<string, unknown>>)?.vision?.elements as unknown[])?.length ?? 0,
+            network: ((e.sources as Record<string, Record<string, unknown>>)?.network?.events as unknown[])?.length ?? 0,
+          },
+        }));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(summary.reverse()));
+        return;
+      }
+
+      // Single extraction detail
+      const extractMatch = url.pathname.match(/^\/api\/extractions\/(\d+)$/);
+      if (extractMatch && req.method === "GET") {
+        const idx = parseInt(extractMatch[1]);
+        const extraction = this.extractionHistory[idx];
+        res.writeHead(extraction ? 200 : 404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(extraction || { error: "Not found" }));
+        return;
+      }
+
+      // Execution history
+      if (url.pathname === "/api/runs" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(this.executionHistory.slice().reverse()));
+        return;
+      }
+
+      // Single run
+      const runMatch = url.pathname.match(/^\/api\/runs\/(\d+)$/);
+      if (runMatch && req.method === "GET") {
+        const id = parseInt(runMatch[1]);
+        const run = this.executionHistory.find((r) => r.id === id);
+        res.writeHead(run ? 200 : 404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(run || { error: "Not found" }));
+        return;
+      }
+
+      // Steps for a run
+      const stepsMatch = url.pathname.match(/^\/api\/runs\/(\d+)\/steps$/);
+      if (stepsMatch && req.method === "GET") {
+        const id = parseInt(stepsMatch[1]);
+        const run = this.executionHistory.find((r) => r.id === id);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(run ? (run.steps as unknown[]) || [] : []));
+        return;
+      }
+
+      // Store summary
+      if (url.pathname === "/api/store/summary" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          runs: this.executionHistory.length,
+          extractions: this.extractionHistory.length,
+          knowledge: 0,
+          observations: 0,
+        }));
+        return;
+      }
+
+      // Default: serve embedded HTML
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(LIVE_VIEW_HTML);
     });
