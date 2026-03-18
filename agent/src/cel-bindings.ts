@@ -6,7 +6,7 @@
  * For development/testing, a mock implementation is used when the native module isn't available.
  */
 
-import type { ScreenContext, Bounds } from "./types.js";
+import type { ScreenContext, Bounds, PlannedStep, PlannerStepRecord } from "./types.js";
 
 /** CEL native module interface — matches the napi exports from cel-napi. */
 export interface CelNative {
@@ -51,6 +51,17 @@ export interface CelNative {
   addScopedKnowledge(dbPath: string, content: string, source: string, workflowScope: string | null, tags: string | null): number;
   // Eviction / TTL
   runEviction(dbPath: string, runRetentionDays: number, knowledgeRetentionDays: number): string;
+  // Planner
+  planStep(
+    goal: string,
+    contextJson: string,
+    historyJson: string,
+    provider?: string,
+    apiKey?: string,
+    model?: string,
+    endpoint?: string,
+    maxTokens?: number,
+  ): Promise<string>;
 }
 
 /** Monitor info from CEL display layer. */
@@ -362,6 +373,23 @@ export class Cel {
   runEviction(runRetentionDays = 90, knowledgeRetentionDays = 365): EvictionResult {
     if (!this.native) return { superseded_observations: 0, old_runs: 0, old_knowledge: 0 };
     return JSON.parse(this.native.runEviction(this.dbPath, runRetentionDays, knowledgeRetentionDays));
+  }
+
+  // --- Planner ---
+
+  /** Plan a single step given a goal, current context, and step history. */
+  async planStep(
+    goal: string,
+    context: ScreenContext,
+    history: PlannerStepRecord[] = [],
+  ): Promise<PlannedStep> {
+    if (!this.native) {
+      throw new Error("Native module not available — planner requires cel-napi");
+    }
+    const contextJson = JSON.stringify(context);
+    const historyJson = JSON.stringify(history);
+    const resultJson = await this.native.planStep(goal, contextJson, historyJson);
+    return JSON.parse(resultJson);
   }
 
   /** Add a scoped knowledge fact. */

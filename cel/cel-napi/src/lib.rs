@@ -398,6 +398,53 @@ pub async fn llm_complete(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+// --- Planner: cel-planner bindings ---
+
+/// Plan a single step given a goal, current context, and step history.
+/// Returns a JSON PlannedStep: { reasoning, action, expected_outcome, confidence }.
+///
+/// The caller runs the loop in TypeScript, calling this function per iteration
+/// with fresh context and accumulated history.
+#[napi]
+pub async fn plan_step(
+    goal: String,
+    context_json: String,
+    history_json: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    model: Option<String>,
+    endpoint: Option<String>,
+    max_tokens: Option<u32>,
+) -> napi::Result<String> {
+    let llm = build_llm_client(provider, api_key, model, endpoint)?;
+
+    let context: cel_context::ScreenContext = serde_json::from_str(&context_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid context JSON: {}", e)))?;
+
+    let history_records: Vec<cel_planner::StepRecord> =
+        serde_json::from_str(&history_json).unwrap_or_default();
+    let history = cel_planner::history::StepHistory::from_records(history_records);
+
+    let system = cel_planner::prompt::system_prompt();
+    let user = cel_planner::prompt::build_user_prompt(&goal, &context, &history);
+
+    let raw = llm
+        .complete(&system, &user, max_tokens.unwrap_or(2048))
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let cleaned = cel_llm::strip_code_fences(&raw);
+    let step: cel_planner::PlannedStep = serde_json::from_str(cleaned).map_err(|e| {
+        napi::Error::from_reason(format!(
+            "LLM output parse error: {}. Raw: {}",
+            e,
+            &raw[..raw.len().min(500)]
+        ))
+    })?;
+
+    serde_json::to_string(&step).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 /// Send an LLM chat completion with an image. Returns the model response string.
 ///
 /// If `provider` is omitted, reads config from env vars (CEL_LLM_PROVIDER, etc.).

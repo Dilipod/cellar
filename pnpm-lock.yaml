@@ -20,10 +20,16 @@ importers:
       '@cellar/agent':
         specifier: workspace:*
         version: link:../../agent
+      playwright:
+        specifier: ^1.45.0
+        version: 1.58.2
     devDependencies:
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@20.19.37)
 
   agent:
     dependencies:

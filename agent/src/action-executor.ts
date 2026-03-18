@@ -8,6 +8,17 @@
 import type { Cel } from "./cel-bindings.js";
 import type { WorkflowStep, WorkflowAction, ScreenContext } from "./types.js";
 
+/** Interface for adapters that can execute custom actions. */
+export interface ActionAdapter {
+  executeAction(
+    action: string,
+    params: Record<string, unknown>,
+  ): Promise<boolean>;
+}
+
+/** Registry of adapters keyed by name (e.g., "browser", "excel"). */
+export type AdapterRegistry = Record<string, ActionAdapter>;
+
 /**
  * Find the screen coordinates for a target element by searching the context.
  * Returns the center point of the element's bounds if found.
@@ -39,6 +50,7 @@ export async function executeAction(
   cel: Cel,
   step: WorkflowStep,
   context: ScreenContext,
+  adapters?: AdapterRegistry,
 ): Promise<boolean> {
   const action = step.action;
 
@@ -93,9 +105,15 @@ export async function executeAction(
     }
 
     case "custom": {
-      // Custom actions are adapter-specific — log and skip for now
+      // Dispatch to the registered adapter
+      if (adapters?.[action.adapter]) {
+        return adapters[action.adapter].executeAction(
+          action.action,
+          action.params,
+        );
+      }
       console.warn(
-        `Custom action "${action.action}" on adapter "${action.adapter}" — not yet wired to adapters`,
+        `Custom action "${action.action}" on adapter "${action.adapter}" — adapter not registered`,
       );
       return true;
     }

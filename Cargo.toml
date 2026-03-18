@@ -9,6 +9,7 @@ members = [
     "cel/cel-network",
     "cel/cel-context",
     "cel/cel-store",
+    "cel/cel-planner",
     "cel/cel-napi",
     "adapters/adapter-common",
     "adapters/excel",
@@ -44,4 +45,5 @@ cel-vision = { path = "cel/cel-vision" }
 cel-network = { path = "cel/cel-network" }
 cel-context = { path = "cel/cel-context" }
 cel-store = { path = "cel/cel-store" }
+cel-planner = { path = "cel/cel-planner" }
 adapter-common = { path = "adapters/adapter-common" }

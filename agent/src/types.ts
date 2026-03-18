@@ -94,3 +94,33 @@ export type WorkflowStatus = "idle" | "running" | "paused" | "completed" | "fail
 
 /** Priority levels for the workflow queue. */
 export type Priority = "low" | "normal" | "high" | "critical";
+
+// --- Planner types (from cel-planner) ---
+
+/** A single step planned by the LLM. */
+export interface PlannedStep {
+  reasoning: string;
+  action: PlannedAction;
+  expected_outcome: string;
+  confidence: number;
+}
+
+/** An action the planner wants to execute. */
+export type PlannedAction =
+  | { type: "click"; target_id: string }
+  | { type: "type"; target_id: string; text: string }
+  | { type: "key"; key: string }
+  | { type: "key_combo"; keys: string[] }
+  | { type: "scroll"; dx: number; dy: number }
+  | { type: "wait"; ms: number }
+  | { type: "custom"; adapter: string; action: string; params: Record<string, unknown> }
+  | { type: "done"; summary: string }
+  | { type: "fail"; reason: string };
+
+/** A recorded step from the planner's history. */
+export interface PlannerStepRecord {
+  step_index: number;
+  action: PlannedAction;
+  success: boolean;
+  error?: string;
+}
