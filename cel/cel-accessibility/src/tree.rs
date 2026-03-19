@@ -20,7 +20,7 @@ pub struct Bounds {
 }
 
 /// UI element role.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ElementRole {
     Window,
     Button,

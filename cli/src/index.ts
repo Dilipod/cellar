@@ -10,6 +10,9 @@ import { captureCommand } from "./commands/capture.js";
 import { contextCommand } from "./commands/context.js";
 import { historyCommand } from "./commands/history.js";
 import { memoryCommand } from "./commands/memory.js";
+import { actionCommand } from "./commands/action.js";
+import { mcpCommand } from "./commands/mcp.js";
+import { setupCommand } from "./commands/setup.js";
 
 const program = new Command();
 
@@ -27,6 +30,9 @@ program.addCommand(captureCommand);
 program.addCommand(contextCommand);
 program.addCommand(historyCommand);
 program.addCommand(memoryCommand);
+program.addCommand(actionCommand);
+program.addCommand(mcpCommand);
+program.addCommand(setupCommand);
 
 program
   .command("live-view")

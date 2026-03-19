@@ -9,6 +9,10 @@
  */
 
 import type { Page, Frame } from "playwright";
+import type { CdpChannel } from "./cdp-channel.js";
+
+/** Anything that can evaluate JS — Playwright Page/Frame or raw CdpChannel. */
+export type Evaluator = Page | Frame | CdpChannel;
 
 /**
  * Raw DOM element descriptor — extracted in the browser context,
@@ -256,14 +260,14 @@ const EXTRACTION_SCRIPT = `(() => {
 })()`;
 
 /**
- * Extract DOM elements from a page or frame.
+ * Extract DOM elements from a page, frame, or CDP channel.
  * Returns a flat array of raw element descriptors.
  */
 export async function extractDOM(
-  pageOrFrame: Page | Frame,
+  evaluator: Evaluator,
 ): Promise<RawDOMElement[]> {
   try {
-    const elements = await pageOrFrame.evaluate(EXTRACTION_SCRIPT);
+    const elements = await evaluator.evaluate(EXTRACTION_SCRIPT);
     return elements as RawDOMElement[];
   } catch (error) {
     // Page may have navigated, been closed, or thrown

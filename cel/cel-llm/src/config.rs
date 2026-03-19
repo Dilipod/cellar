@@ -60,6 +60,70 @@ impl From<&str> for ProviderKind {
     }
 }
 
+/// Model capability tier — determines prompt complexity and context budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelTier {
+    /// Small/fast models (gemini-flash, gpt-4o-mini, haiku). Short prompts, aggressive filtering.
+    Flash,
+    /// Standard models (gpt-4o, claude-sonnet, gemini-pro). Default behavior.
+    Standard,
+    /// Premium models (claude-opus, o3, gpt-5). Extended prompts, more context.
+    Premium,
+}
+
+impl Default for ModelTier {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
+/// Profile describing a model's capabilities.
+#[derive(Debug, Clone)]
+pub struct ModelProfile {
+    pub provider: ProviderKind,
+    pub model_id: String,
+    pub tier: ModelTier,
+}
+
+impl ModelProfile {
+    /// Infer a model profile from a model ID string.
+    pub fn from_model_id(model_id: &str) -> Self {
+        let lower = model_id.to_lowercase();
+        let provider = if lower.contains("claude") || lower.contains("anthropic") {
+            ProviderKind::Anthropic
+        } else if lower.contains("gemini") {
+            ProviderKind::Gemini
+        } else if lower.contains("gpt") || lower.contains("o1") || lower.contains("o3") {
+            ProviderKind::OpenAI
+        } else {
+            ProviderKind::Custom
+        };
+
+        let tier = if lower.contains("flash")
+            || lower.contains("mini")
+            || lower.contains("haiku")
+            || lower.contains("nano")
+        {
+            ModelTier::Flash
+        } else if lower.contains("opus")
+            || lower.contains("o3")
+            || lower.contains("gpt-5")
+            || lower.contains("pro")
+        {
+            ModelTier::Premium
+        } else {
+            ModelTier::Standard
+        };
+
+        ModelProfile {
+            provider,
+            model_id: model_id.to_string(),
+            tier,
+        }
+    }
+}
+
 /// Configuration for an LLM provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmProviderConfig {
@@ -194,6 +258,34 @@ mod tests {
 
         std::env::remove_var("CEL_LLM_PROVIDER");
         std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn test_model_tier_flash() {
+        assert_eq!(ModelProfile::from_model_id("gemini-2.0-flash").tier, ModelTier::Flash);
+        assert_eq!(ModelProfile::from_model_id("gpt-4o-mini").tier, ModelTier::Flash);
+        assert_eq!(ModelProfile::from_model_id("claude-haiku-4-5").tier, ModelTier::Flash);
+    }
+
+    #[test]
+    fn test_model_tier_standard() {
+        assert_eq!(ModelProfile::from_model_id("gpt-4o").tier, ModelTier::Standard);
+        assert_eq!(ModelProfile::from_model_id("claude-sonnet-4-20250514").tier, ModelTier::Standard);
+    }
+
+    #[test]
+    fn test_model_tier_premium() {
+        assert_eq!(ModelProfile::from_model_id("claude-opus-4-6").tier, ModelTier::Premium);
+        assert_eq!(ModelProfile::from_model_id("o3").tier, ModelTier::Premium);
+        assert_eq!(ModelProfile::from_model_id("gpt-5").tier, ModelTier::Premium);
+    }
+
+    #[test]
+    fn test_model_profile_provider_detection() {
+        assert_eq!(ModelProfile::from_model_id("claude-sonnet-4").provider, ProviderKind::Anthropic);
+        assert_eq!(ModelProfile::from_model_id("gpt-4o").provider, ProviderKind::OpenAI);
+        assert_eq!(ModelProfile::from_model_id("gemini-2.0-flash").provider, ProviderKind::Gemini);
+        assert_eq!(ModelProfile::from_model_id("llama-3").provider, ProviderKind::Custom);
     }
 
     #[test]

@@ -50,9 +50,17 @@ export type {
   Bounds,
   ElementState,
   NetworkEvent,
+  BoundsRegion,
+  ContextReference,
+  FocusedContext,
+  CelEvent,
+  PageContent,
+  TextBlock,
+  DomElement,
   PlannedStep,
   PlannedAction,
   PlannerStepRecord,
+  GoalMetrics,
 } from "./types.js";
 export type { ActionAdapter, AdapterRegistry } from "./action-executor.js";
 export {

@@ -8,7 +8,12 @@
 //! 2. **StubNetworkMonitor** — no-op fallback
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 /// A captured network event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +51,12 @@ pub trait NetworkMonitor: Send + Sync {
 
     /// Whether the monitor is currently active.
     fn is_running(&self) -> bool;
+
+    /// Whether network is idle (no recent new connections).
+    /// Default: always true (for monitors that don't track idle state).
+    fn is_idle(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -243,7 +254,11 @@ pub fn create_monitor() -> Box<dyn NetworkMonitor> {
     {
         return Box::new(ProcNetMonitor::new());
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        return Box::new(macos::LsofNetMonitor::new());
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         Box::new(StubNetworkMonitor)
     }

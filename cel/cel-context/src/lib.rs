@@ -5,8 +5,17 @@
 
 mod element;
 mod confidence;
+pub mod events;
 mod merge;
+mod resolve;
+pub mod watchdog;
 
-pub use element::{Bounds, ContextElement, ContextSource, ElementState, ScreenContext};
+pub use element::{
+    Bounds, BoundsRegion, ContextElement, ContextReference, ContextSource, ElementState,
+    FocusedContext, ScreenContext,
+};
 pub use confidence::{ConfidenceBehavior, ConfidenceThresholds};
+pub use events::CelEvent;
 pub use merge::ContextMerger;
+pub use resolve::resolve_reference;
+pub use watchdog::ContextWatchdog;

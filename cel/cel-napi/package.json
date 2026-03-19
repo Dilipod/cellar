@@ -1,0 +1,17 @@
+{
+  "name": "@cellar/cel-napi",
+  "version": "0.1.0",
+  "description": "CEL native bindings via napi-rs",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "cel-napi.darwin-arm64.node"
+  ],
+  "napi": {
+    "name": "cel-napi",
+    "triples": {
+      "defaults": false,
+      "additional": ["aarch64-apple-darwin"]
+    }
+  }
+}

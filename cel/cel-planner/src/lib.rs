@@ -10,13 +10,17 @@
 
 mod error;
 pub mod history;
+pub mod loop_detector;
 mod planner;
 pub mod prompt;
 mod types;
 
 pub use error::PlannerError;
-pub use planner::{Planner, PlannerBackend};
-pub use types::{GoalConfig, PlannedAction, PlannedStep, PlannerEvent, StepRecord};
+pub use loop_detector::{context_fingerprint, LoopDetector, LoopSignal};
+pub use planner::{find_blocking_error, validate_grounding, Planner, PlannerBackend};
+pub use types::{
+    ContextDetail, GoalConfig, PlannedAction, PlannedPlan, PlannedStep, PlannerEvent, StepRecord,
+};
 
 /// Create a planner from environment-configured LLM.
 pub fn create_planner(config: GoalConfig) -> Result<Planner, PlannerError> {

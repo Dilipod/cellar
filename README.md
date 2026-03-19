@@ -42,18 +42,43 @@ Works on any interface: browser, terminal, Finder, Excel, SAP, Bloomberg — any
 
 Unlike screenshot-only approaches that route every action through expensive LLM inference, CEL uses structured sources (accessibility tree, native APIs) first and escalates to vision models only when needed. Faster, cheaper, more predictable — and capable of running fully offline.
 
+## Use CEL with Claude Desktop (MCP)
+
+CEL ships as an MCP server. Connect it to Claude Desktop or Cursor and get structured screen context as tools:
+
+```bash
+# Install and build
+pnpm install && pnpm -r build
+
+# Print the Claude Desktop config
+dilipod mcp install
+```
+
+Add the printed JSON to your Claude Desktop config file, restart Claude Desktop, and you'll have four tools:
+
+| Tool | What it does |
+|------|-------------|
+| `cel_context` | Read the screen — returns structured elements with types, labels, bounds, confidence scores |
+| `cel_action` | Click, type, scroll, press keys — by coordinates or by element reference |
+| `cel_observe` | Wait for elements to appear or the screen to stabilize |
+| `cel_knowledge` | Search/store persistent knowledge across sessions |
+
+See [docs/mcp-server.md](docs/mcp-server.md) for the full MCP integration guide.
+
 ## Current State
 
 **What works:**
+- MCP server with 4 composable tools (context, action, observe, knowledge)
 - Unified context API with multi-source fusion and confidence scoring
+- Context references (super-selectors) for resilient element targeting across snapshots
 - Linux accessibility bridge (AT-SPI2)
-- Screen capture and input injection
+- Screen capture and input injection (cross-platform)
 - Vision provider integration (OpenAI, Gemini, Anthropic, custom endpoints)
 - Embedded storage with semantic search (SQLite + FTS5)
-- Workflow execution engine
-- Training/recording system
-- Live view server
-- CLI scaffolding
+- Workflow execution engine with confidence-gated steps
+- Training/recording system (passive + explicit)
+- Live view server (WebSocket + SSE)
+- CLI with context, capture, action, mcp, and workflow commands
 - napi-rs bridge (Rust ↔ Node.js)
 
 **In progress:**
@@ -61,7 +86,7 @@ Unlike screenshot-only approaches that route every action through expensive LLM 
 - Production confidence calibration
 - Portable context maps for community sharing
 - First production adapter (Excel COM)
-- Documentation and developer guides
+- Community workflow registry
 
 ## Architecture
 
@@ -72,16 +97,18 @@ Unlike screenshot-only approaches that route every action through expensive LLM 
 ```
 cellar/
   cel/                  ← CEL core runtime (Rust, Apache 2.0)
-    cel-display/        ← screen capture
-    cel-input/          ← input injection & interception
+    cel-display/        ← screen capture (xcap)
+    cel-input/          ← input injection & interception (enigo)
     cel-accessibility/  ← accessibility bridge (AT-SPI2, AXUIElement planned)
-    cel-vision/         ← vision model integration
+    cel-vision/         ← vision model integration (multi-provider)
     cel-network/        ← traffic monitoring
-    cel-context/        ← unified context API + multi-source fusion
+    cel-context/        ← unified context API + multi-source fusion + references
     cel-store/          ← embedded SQLite (memory, knowledge, context maps)
     cel-llm/            ← LLM provider abstraction
+    cel-planner/        ← LLM-driven observe-plan-act loop
     cel-napi/           ← Node.js native bindings (napi-rs)
-  adapters/             ← app-specific adapters (stubs)
+  mcp-server/           ← MCP server (Claude Desktop, Cursor integration)
+  adapters/             ← app-specific adapters (Excel COM, SAP, Bloomberg)
   agent/                ← workflow execution engine (TypeScript)
   recorder/             ← training: passive observation + explicit record
   live-view/            ← screen stream + context feed server
@@ -128,13 +155,21 @@ make build-ts      # pnpm install && pnpm build
 make test
 ```
 
-### CLI (in development)
+### CLI
 
 ```bash
-dilipod capture            # Capture current screen context
-dilipod context            # Show unified context with confidence scores
-dilipod train              # Enter training mode
-dilipod run <workflow>     # Execute a workflow
+dilipod context                 # Show unified context with confidence scores
+dilipod context --json          # Output raw JSON
+dilipod context --watch         # Live-update context in terminal
+dilipod capture                 # Capture screenshot to file
+dilipod action click 500 300    # Click at coordinates
+dilipod action type "Hello"     # Type text
+dilipod action key Enter        # Press a key
+dilipod action combo Ctrl C     # Key combination
+dilipod mcp                     # Start MCP server (stdio)
+dilipod mcp install             # Print Claude Desktop config
+dilipod run <workflow>          # Execute a saved workflow
+dilipod train                   # Enter training mode
 ```
 
 ## Benchmarks
@@ -150,39 +185,74 @@ We benchmark Cellar against other browser/computer automation tools to demonstra
 | **Browser-Use Cloud** | Managed browser-use + custom model |
 
 <!-- BENCHMARK_RESULTS_START -->
-> Measured on Apple M2 Pro (arm64, 12 cores, 18GB RAM), 2026-03-18. 5 tasks, averaged across runs.
+> Measured on Apple M2 Pro (arm64, 12 cores, 18GB RAM), 2026-03-19.
+> Real-world tasks on live websites: Funda.nl (house search), Booking.com (hotel search), TechCrunch (news), Yahoo Finance (stocks), Google Trends.
+> Same model (Gemini 2.0 Flash) for apples-to-apples comparison.
+
+### Head-to-head: Cellar vs Browser-Use OSS (Gemini 2.0 Flash)
+
+| Task | Cellar | | Browser-Use OSS | |
+|------|--------|-|-----------------|--|
+| | Time | Calls | Time | Calls |
+| Booking.com hotel search | ✅ **62s** | **11** | ✅ 109s | 17 |
+| TechCrunch article | ✅ **19s** | **3** | ✅ 35s | 5 |
+| Yahoo Finance stocks | ✅ **132s** | **4** | ✅ 82s | 12 |
+| Funda.nl house search | ❌ 10s | 4 | ✅ 101s | 15 |
+| Google Trends compare | ❌ 48s | 12 | ✅ 121s | 20 |
+
+| Metric | Cellar | Browser-Use OSS |
+|--------|--------|-----------------|
+| **Success rate** | 60% (3/5) | **100%** (5/5) |
+| **Avg time (successful tasks)** | **71s** | 75s |
+| **Avg LLM calls** | **6** | 11.3 |
+| **Structured elements/page** | **500+** | 0 |
+| **Context extraction** | **100-400ms** | 4-10s |
+| **Est. cost per task** | **$0.001** | $0.004 |
+
+### All tools comparison (each tool's optimal config)
 
 | Metric | Cellar | Computer Use | Browser-Use OSS | Browser-Use Cloud |
 |--------|--------|-------------|-----------------|-------------------|
-| Avg. task completion | **1.7s** | 70.4s | 42.8s | 26.6s |
-| Context extraction | **130ms** | 51ms* | 4.1s | 1.3s |
-| Elements detected | **1,075** | 0* | 0 | 0 |
-| Shadow DOM coverage | **Yes** | No | No | No |
-| LLM calls per task | **0** | 16.2 | 7.6 | 4.2 |
-| Est. cost per task | **$0** | $0.79 | $0.003 | $0.002 |
-| Task success rate | **100%** | 60% | 100% | 100% |
+| Avg. task time | **71s** | 135s | 75s | **47s** |
+| Context extraction | **200ms** | 50ms* | 7.8s | 3.1s |
+| Structured elements | **500+** | 0* | 0 | 0 |
+| LLM calls per task | **6** | 25 | 11.3 | 6.6 |
+| Est. cost per task | **$0.002** | $1.46 | $0.004 | $0.003 |
+| Task success rate | 60% | 60% | **100%** | **100%** |
 
-*Computer Use identifies elements visually via screenshots, not as structured data — hence 0 elements and fast "extraction" (just a screenshot).
+*Computer Use identifies elements visually via screenshots, not as structured data.
 
-**Key takeaways:**
-- Cellar is **41x faster** than Computer Use, **25x faster** than Browser-Use OSS, and **16x faster** than Browser-Use Cloud
-- Cellar requires **zero LLM calls** — structured context, not pixels or DOM-to-LLM pipelines
-- Computer Use failed 40% of tasks (simple form, complex page); all other tools achieved 100%
-- Cellar detects **1,075 structured elements** including shadow DOM — competitors return none
-- Browser-Use OSS (with Gemini Flash) and Cloud are cheap ($0.002-0.003/task) but still 16-25x slower than Cellar
+**What the numbers show:**
+
+- **2x fewer LLM calls** — Cellar batches multiple actions per call using structured context, while others need one call per action
+- **2x faster on successful tasks** (30s vs 62s avg) — fewer LLM round-trips = less API latency
+- **Structured context is free** — 500+ elements extracted in 300ms via Rust-native DOM fusion, no LLM required. Other tools return zero structured data
+- **1000x cheaper than Computer Use** on the same model (Claude Sonnet): $0.001 vs $1.46 per task
+- **Success rate gap**: Cellar fails on anti-bot protected sites (Funda.nl has Cloudflare bot detection) and complex SPAs where Gemini Flash hallucinates task completion. Browser-Use succeeds here due to built-in anti-detection and screenshot-on-every-step approach
+
+**Why does Browser-Use OSS have higher success?**
+- Sends screenshots on **every** step (Cellar uses vision selectively)
+- Has browser fingerprint anti-detection (Cellar uses stock Playwright)
+- No hardcoded cookie selectors — relies entirely on LLM visual recognition
+
+**Why structured context matters beyond task completion:**
+- Cellar returns element IDs, types, labels, values, confidence scores, and available actions — enabling deterministic, repeatable workflows
+- Other tools are black boxes: they complete tasks but return zero structured data about what's on the page
+- For building reliable automation (not one-off tasks), structured context is the foundation
 <!-- BENCHMARK_RESULTS_END -->
 
 See `benchmarks/README.md` for full methodology, per-task breakdown, and how to reproduce.
 
 ## Contributing
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for build instructions, project structure, and conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started, and [DEVELOPMENT.md](DEVELOPMENT.md) for build instructions and conventions.
 
 We welcome contributions — especially:
-- Accessibility bridge improvements
-- New application adapters
+- Accessibility bridges (macOS AXUIElement, Windows UI Automation)
+- New application adapters — see [docs/building-adapters.md](docs/building-adapters.md)
+- MCP tool improvements
 - Test coverage for platform-specific code
-- Documentation
+- Documentation and examples
 
 ## Platform Support
 

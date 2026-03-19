@@ -9,6 +9,10 @@ pub struct EnigoInput {
     enigo: Enigo,
 }
 
+// SAFETY: EnigoInput is always accessed behind a Mutex (see cel-napi OnceLock<Mutex<>>).
+// Enigo's CGEventSource on macOS isn't Sync, but we guarantee single-threaded access via Mutex.
+unsafe impl Sync for EnigoInput {}
+
 impl EnigoInput {
     pub fn new() -> Result<Self, InputError> {
         let settings = Settings::default();

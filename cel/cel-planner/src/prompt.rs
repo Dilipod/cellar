@@ -2,17 +2,25 @@
 ///
 /// Serializes ScreenContext elements into a compact table format
 /// that the LLM can reason about, along with step history and goal.
+///
+/// Integrates learnings from browser-use OSS:
+/// - Data grounding rules (anti-hallucination)
+/// - Password field redaction
+/// - Step budget awareness
+/// - Visibility filtering (hidden elements omitted)
+/// - Compact/ActionableOnly context modes
+/// - Loop warning injection
 
 use cel_context::ScreenContext;
 
 use crate::history::StepHistory;
-use crate::types::PlannedAction;
+use crate::types::{ContextDetail, PlannedAction};
 
-/// Maximum elements to include in the prompt (already sorted by confidence).
-const MAX_ELEMENTS: usize = 40;
+/// Default maximum elements to include in the prompt (already sorted by confidence).
+const DEFAULT_MAX_ELEMENTS: usize = 40;
 
-/// Maximum recent steps to include in history.
-const MAX_HISTORY_STEPS: usize = 10;
+/// Default maximum recent steps to include in history.
+const DEFAULT_MAX_HISTORY_STEPS: usize = 10;
 
 /// The system prompt that defines the LLM's role and output schema.
 pub fn system_prompt() -> String {
@@ -22,10 +30,13 @@ pub fn system_prompt() -> String {
 1. You are given a GOAL and the current SCREEN CONTEXT (visible UI elements).
 2. Return exactly ONE action as a JSON object with the schema below.
 3. Pick the element most likely to advance the goal. Use the element ID from the context.
-4. If the goal is achieved, return a "done" action.
+4. If the goal is achieved, return a "done" action with evidence_ids.
 5. If the goal cannot be achieved (missing elements, error state), return a "fail" action.
-6. Never invent element IDs. Only use IDs from the context.
-7. If a previous step failed, try a different approach.
+6. Never invent element IDs. Only use IDs listed in the UI Elements table.
+7. If a previous step failed, try a DIFFERENT approach — do not repeat the same action.
+8. When returning "done", include evidence_ids listing element IDs from the context that prove the goal was achieved (e.g. a success message, the expected content visible on screen).
+9. If you see error messages, HTTP 4xx/5xx responses, or blocking dialogs (cookie walls, login prompts, CAPTCHAs), do NOT return "done". Address the blocker or return "fail".
+10. Base all claims on data visible in the context. Never fabricate or assume information not shown.
 
 ## Response Schema (JSON)
 {
@@ -43,23 +54,62 @@ pub fn system_prompt() -> String {
 - {"type": "scroll", "dx": 0, "dy": -3} — Scroll (negative dy = scroll up)
 - {"type": "wait", "ms": 1000} — Wait for UI to settle
 - {"type": "custom", "adapter": "...", "action": "...", "params": {...}} — Adapter-specific
-- {"type": "done", "summary": "Goal achieved: ..."} — Goal complete
+- {"type": "done", "summary": "Goal achieved: ...", "evidence_ids": ["id1", "id2"]} — Goal complete with proof
 - {"type": "fail", "reason": "Cannot proceed because ..."} — Goal impossible
 
 Respond ONLY with valid JSON. No explanation outside the JSON."#
         .to_string()
 }
 
+/// Options for building the user prompt.
+#[derive(Debug, Clone, Default)]
+pub struct PromptOptions<'a> {
+    /// Current step index (0-based).
+    pub step_index: u32,
+    /// Maximum steps allowed.
+    pub max_steps: u32,
+    /// Optional loop warning to inject.
+    pub loop_warning: Option<&'a str>,
+    /// How much detail to include in the element table.
+    pub context_detail: ContextDetail,
+    /// Maximum elements to include (0 = use default).
+    pub max_elements: usize,
+    /// Maximum history steps to include (0 = use default).
+    pub max_history_steps: usize,
+    /// Maximum network events to include (0 = omit).
+    pub max_network_events: usize,
+}
+
 /// Build the user prompt with current context and step history.
+///
+/// Accepts `PromptOptions` for budget awareness, loop warnings, and context detail.
 pub fn build_user_prompt(
     goal: &str,
     context: &ScreenContext,
     history: &StepHistory,
+    opts: &PromptOptions,
 ) -> String {
     let mut prompt = String::with_capacity(4096);
 
     // Goal
     prompt.push_str(&format!("## Goal\n{}\n\n", goal));
+
+    // Step budget
+    if opts.max_steps > 0 {
+        let remaining = opts.max_steps.saturating_sub(opts.step_index + 1);
+        prompt.push_str(&format!(
+            "## Budget\nStep {} of {}. {} steps remaining.",
+            opts.step_index + 1,
+            opts.max_steps,
+            remaining,
+        ));
+        if remaining < 5 {
+            prompt.push_str(
+                " URGENT: Running low on steps. Complete the goal now or fail gracefully.",
+            );
+        }
+        prompt.push_str("\n\n");
+    }
 
     // Current screen
     prompt.push_str(&format!(
@@ -67,43 +117,87 @@ pub fn build_user_prompt(
         context.app, context.window
     ));
 
+    // Resolve configurable limits (0 = use defaults)
+    let max_elements = if opts.max_elements > 0 { opts.max_elements } else { DEFAULT_MAX_ELEMENTS };
+    let max_history = if opts.max_history_steps > 0 { opts.max_history_steps } else { DEFAULT_MAX_HISTORY_STEPS };
+    let max_network = if opts.max_network_events > 0 { opts.max_network_events } else { 5 };
+
+    // Filter elements: always exclude hidden, apply context_detail mode
+    let visible: Vec<_> = context
+        .elements
+        .iter()
+        .filter(|el| el.state.visible)
+        .collect();
+
+    let elements: Vec<_> = match opts.context_detail {
+        ContextDetail::ActionableOnly => visible
+            .into_iter()
+            .filter(|el| el.state.enabled && !el.actions.is_empty())
+            .take(max_elements)
+            .collect(),
+        _ => visible.into_iter().take(max_elements).collect(),
+    };
+
+    let total_visible = context.elements.iter().filter(|el| el.state.visible).count();
+
     // Elements table
     prompt.push_str("## UI Elements\n");
-    prompt.push_str("| ID | Type | Label | Value | State | Actions |\n");
-    prompt.push_str("|-----|------|-------|-------|-------|--------|\n");
-
-    for el in context.elements.iter().take(MAX_ELEMENTS) {
-        let label = el.label.as_deref().unwrap_or("-");
-        let value = el.value.as_deref().unwrap_or("-");
-        let state = format_state(&el.state);
-        let actions = if el.actions.is_empty() {
-            "-".to_string()
-        } else {
-            el.actions.join(", ")
-        };
-        prompt.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} |\n",
-            el.id,
-            el.element_type,
-            truncate(label, 30),
-            truncate(value, 20),
-            state,
-            actions,
-        ));
+    match opts.context_detail {
+        ContextDetail::Compact | ContextDetail::ActionableOnly => {
+            prompt.push_str("| ID | Type | Label |\n");
+            prompt.push_str("|-----|------|-------|\n");
+            for el in &elements {
+                let label = el.label.as_deref().unwrap_or("-");
+                prompt.push_str(&format!(
+                    "| {} | {} | {} |\n",
+                    el.id,
+                    el.element_type,
+                    truncate(label, 40),
+                ));
+            }
+        }
+        ContextDetail::Full => {
+            prompt.push_str("| ID | Type | Label | Value | State | Actions |\n");
+            prompt.push_str("|-----|------|-------|-------|-------|--------|\n");
+            for el in &elements {
+                let label = el.label.as_deref().unwrap_or("-");
+                // Redact password field values
+                let value = if el.element_type.contains("password") {
+                    "****"
+                } else {
+                    el.value.as_deref().unwrap_or("-")
+                };
+                let state = format_state(&el.state);
+                let actions = if el.actions.is_empty() {
+                    "-".to_string()
+                } else {
+                    el.actions.join(", ")
+                };
+                prompt.push_str(&format!(
+                    "| {} | {} | {} | {} | {} | {} |\n",
+                    el.id,
+                    el.element_type,
+                    truncate(label, 30),
+                    truncate(value, 20),
+                    state,
+                    actions,
+                ));
+            }
+        }
     }
 
-    if context.elements.len() > MAX_ELEMENTS {
+    if total_visible > elements.len() {
         prompt.push_str(&format!(
             "\n({} more elements not shown)\n",
-            context.elements.len() - MAX_ELEMENTS
+            total_visible - elements.len()
         ));
     }
     prompt.push('\n');
 
-    // Network events (if any)
-    if !context.network_events.is_empty() {
+    // Network events (if any, and if max_network > 0)
+    if !context.network_events.is_empty() && max_network > 0 {
         prompt.push_str("## Recent Network\n");
-        for event in context.network_events.iter().take(5) {
+        for event in context.network_events.iter().take(max_network) {
             let method = event.method.as_deref().unwrap_or("?");
             let status = event
                 .status
@@ -119,8 +213,14 @@ pub fn build_user_prompt(
         prompt.push('\n');
     }
 
-    // Step history
-    let recent = history.recent(MAX_HISTORY_STEPS);
+    // Step history (compacted summary + recent steps)
+    if let Some(summary) = history.compacted_summary() {
+        prompt.push_str("## Earlier Steps (Summary)\n");
+        prompt.push_str(summary);
+        prompt.push_str("\n\n");
+    }
+
+    let recent = history.recent(max_history);
     if !recent.is_empty() {
         prompt.push_str("## Previous Steps\n");
         for step in recent {
@@ -139,6 +239,15 @@ pub fn build_user_prompt(
             prompt.push('\n');
         }
         prompt.push('\n');
+    }
+
+    // Loop warning (injected by loop detector)
+    if let Some(warning) = opts.loop_warning {
+        prompt.push_str("## WARNING\n");
+        prompt.push_str(warning);
+        prompt.push_str(
+            "\nYou MUST try a completely different approach. Do NOT repeat the same action.\n\n",
+        );
     }
 
     prompt.push_str("## Your Next Step\nRespond with ONE action as JSON.\n");
@@ -196,7 +305,7 @@ fn summarize_action(action: &PlannedAction) -> String {
         PlannedAction::Custom { adapter, action, .. } => {
             format!("custom({}.{})", adapter, action)
         }
-        PlannedAction::Done { summary } => format!("DONE: {}", truncate(summary, 40)),
+        PlannedAction::Done { summary, .. } => format!("DONE: {}", truncate(summary, 40)),
         PlannedAction::Fail { reason } => format!("FAIL: {}", truncate(reason, 40)),
     }
 }
@@ -239,6 +348,14 @@ mod tests {
         }
     }
 
+    fn default_opts() -> PromptOptions<'static> {
+        PromptOptions {
+            step_index: 0,
+            max_steps: 30,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_system_prompt_contains_schema() {
         let prompt = system_prompt();
@@ -248,13 +365,23 @@ mod tests {
         assert!(prompt.contains("confidence"));
         assert!(prompt.contains("done"));
         assert!(prompt.contains("fail"));
+        assert!(prompt.contains("evidence_ids"));
+    }
+
+    #[test]
+    fn test_system_prompt_contains_grounding_rules() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("Never invent element IDs"));
+        assert!(prompt.contains("evidence_ids listing element IDs"));
+        assert!(prompt.contains("error messages, HTTP 4xx/5xx"));
+        assert!(prompt.contains("Never fabricate"));
     }
 
     #[test]
     fn test_user_prompt_contains_goal() {
         let context = make_context(vec![]);
         let history = StepHistory::new();
-        let prompt = build_user_prompt("Log in to admin", &context, &history);
+        let prompt = build_user_prompt("Log in to admin", &context, &history, &default_opts());
         assert!(prompt.contains("Log in to admin"));
     }
 
@@ -262,7 +389,7 @@ mod tests {
     fn test_user_prompt_contains_app_info() {
         let context = make_context(vec![]);
         let history = StepHistory::new();
-        let prompt = build_user_prompt("test", &context, &history);
+        let prompt = build_user_prompt("test", &context, &history, &default_opts());
         assert!(prompt.contains("TestApp"));
         assert!(prompt.contains("Test Window"));
     }
@@ -274,7 +401,7 @@ mod tests {
             make_element("dom:email", "input", "Email"),
         ]);
         let history = StepHistory::new();
-        let prompt = build_user_prompt("test", &context, &history);
+        let prompt = build_user_prompt("test", &context, &history, &default_opts());
         assert!(prompt.contains("dom:submit"));
         assert!(prompt.contains("dom:email"));
         assert!(prompt.contains("button"));
@@ -304,7 +431,7 @@ mod tests {
             false,
             Some("Element not found".into()),
         );
-        let prompt = build_user_prompt("test", &context, &history);
+        let prompt = build_user_prompt("test", &context, &history, &default_opts());
         assert!(prompt.contains("[OK] click(btn1)"));
         assert!(prompt.contains("[FAILED] type(inp"));
         assert!(prompt.contains("Element not found"));
@@ -317,13 +444,114 @@ mod tests {
             .collect();
         let context = make_context(elements);
         let history = StepHistory::new();
-        let prompt = build_user_prompt("test", &context, &history);
+        let prompt = build_user_prompt("test", &context, &history, &default_opts());
         // Should contain the overflow notice
         assert!(prompt.contains("20 more elements not shown"));
         // Should contain early elements but not late ones
         assert!(prompt.contains("el0"));
         assert!(prompt.contains("el39"));
         assert!(!prompt.contains("| el40 |"));
+    }
+
+    #[test]
+    fn test_budget_shown() {
+        let context = make_context(vec![]);
+        let history = StepHistory::new();
+        let opts = PromptOptions {
+            step_index: 5,
+            max_steps: 30,
+            ..default_opts()
+        };
+        let prompt = build_user_prompt("test", &context, &history, &opts);
+        assert!(prompt.contains("Step 6 of 30"));
+        assert!(prompt.contains("24 steps remaining"));
+    }
+
+    #[test]
+    fn test_budget_urgent_when_low() {
+        let context = make_context(vec![]);
+        let history = StepHistory::new();
+        let opts = PromptOptions {
+            step_index: 27,
+            max_steps: 30,
+            ..default_opts()
+        };
+        let prompt = build_user_prompt("test", &context, &history, &opts);
+        assert!(prompt.contains("URGENT"));
+        assert!(prompt.contains("2 steps remaining"));
+    }
+
+    #[test]
+    fn test_loop_warning_injected() {
+        let context = make_context(vec![]);
+        let history = StepHistory::new();
+        let opts = PromptOptions {
+            loop_warning: Some("Repeated click(btn) 3 times."),
+            ..default_opts()
+        };
+        let prompt = build_user_prompt("test", &context, &history, &opts);
+        assert!(prompt.contains("## WARNING"));
+        assert!(prompt.contains("Repeated click(btn) 3 times."));
+        assert!(prompt.contains("completely different approach"));
+    }
+
+    #[test]
+    fn test_hidden_elements_excluded() {
+        let mut hidden = make_element("dom:hidden", "div", "Hidden");
+        hidden.state.visible = false;
+        let visible = make_element("dom:visible", "button", "Visible");
+        let context = make_context(vec![hidden, visible]);
+        let history = StepHistory::new();
+        let prompt = build_user_prompt("test", &context, &history, &default_opts());
+        assert!(!prompt.contains("dom:hidden"));
+        assert!(prompt.contains("dom:visible"));
+    }
+
+    #[test]
+    fn test_password_values_redacted() {
+        let mut pw = make_element("dom:pw", "password", "Password");
+        pw.value = Some("secret123".into());
+        let mut txt = make_element("dom:txt", "input", "Name");
+        txt.value = Some("John".into());
+        let context = make_context(vec![pw, txt]);
+        let history = StepHistory::new();
+        let prompt = build_user_prompt("test", &context, &history, &default_opts());
+        assert!(prompt.contains("****"));
+        assert!(!prompt.contains("secret123"));
+        assert!(prompt.contains("John"));
+    }
+
+    #[test]
+    fn test_compact_mode() {
+        let context = make_context(vec![
+            make_element("btn1", "button", "Submit"),
+        ]);
+        let history = StepHistory::new();
+        let opts = PromptOptions {
+            context_detail: ContextDetail::Compact,
+            ..default_opts()
+        };
+        let prompt = build_user_prompt("test", &context, &history, &opts);
+        assert!(prompt.contains("| ID | Type | Label |"));
+        // Should NOT have Value/State/Actions columns
+        assert!(!prompt.contains("| Value |"));
+        assert!(!prompt.contains("| State |"));
+    }
+
+    #[test]
+    fn test_actionable_only_mode() {
+        let mut no_actions = make_element("text1", "text", "Static text");
+        no_actions.actions = vec![];
+        let with_actions = make_element("btn1", "button", "Click me");
+        let context = make_context(vec![no_actions, with_actions]);
+        let history = StepHistory::new();
+        let opts = PromptOptions {
+            context_detail: ContextDetail::ActionableOnly,
+            ..default_opts()
+        };
+        let prompt = build_user_prompt("test", &context, &history, &opts);
+        assert!(!prompt.contains("text1"));
+        assert!(prompt.contains("btn1"));
     }
 
     #[test]
@@ -376,7 +604,10 @@ mod tests {
             "key(Enter)"
         );
         assert_eq!(
-            summarize_action(&PlannedAction::Done { summary: "All done".into() }),
+            summarize_action(&PlannedAction::Done {
+                summary: "All done".into(),
+                evidence_ids: vec![],
+            }),
             "DONE: All done"
         );
     }

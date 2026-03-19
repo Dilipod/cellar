@@ -17,6 +17,7 @@
     "@cellar/recorder": "workspace:*",
     "@cellar/live-view": "workspace:*",
     "@cellar/registry": "workspace:*",
+    "@cellar/mcp-server": "workspace:*",
     "commander": "^12.1.0"
   },
   "devDependencies": {

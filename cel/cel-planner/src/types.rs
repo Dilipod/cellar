@@ -2,6 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How much detail to include in the context prompt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ContextDetail {
+    /// Full 6-column table: ID, Type, Label, Value, State, Actions.
+    #[default]
+    Full,
+    /// Compact 3-column table: ID, Type, Label. ~40% fewer tokens.
+    Compact,
+    /// Only elements that are enabled, visible, and have actions. ~60-80% fewer.
+    ActionableOnly,
+}
+
 /// Configuration for a planning session.
 #[derive(Debug, Clone)]
 pub struct GoalConfig {
@@ -13,6 +25,8 @@ pub struct GoalConfig {
     pub max_retries: u32,
     /// LLM max_tokens for each planning call.
     pub max_tokens: u32,
+    /// How much detail to include in the element table.
+    pub context_detail: ContextDetail,
 }
 
 impl Default for GoalConfig {
@@ -22,6 +36,7 @@ impl Default for GoalConfig {
             max_steps: 50,
             max_retries: 3,
             max_tokens: 2048,
+            context_detail: ContextDetail::Full,
         }
     }
 }
@@ -46,6 +61,17 @@ pub struct PlannedStep {
     pub expected_outcome: String,
     /// LLM's self-assessed confidence (0.0-1.0).
     pub confidence: f64,
+}
+
+/// A multi-step plan from the LLM (plan-ahead mode).
+/// Only the first step is executed immediately; remaining steps are tentative
+/// and will be re-evaluated if the context diverges from expectations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlannedPlan {
+    /// High-level reasoning for the overall plan.
+    pub overall_reasoning: String,
+    /// Ordered list of planned steps. First step is executed, rest are tentative.
+    pub steps: Vec<PlannedStep>,
 }
 
 /// The action the planner wants to execute.
@@ -78,9 +104,12 @@ pub enum PlannedAction {
         #[serde(default)]
         params: serde_json::Value,
     },
-    /// Terminal: goal achieved.
+    /// Terminal: goal achieved. `evidence_ids` should cite element IDs
+    /// from the current context that prove the goal was achieved.
     Done {
         summary: String,
+        #[serde(default)]
+        evidence_ids: Vec<String>,
     },
     /// Terminal: cannot proceed.
     Fail {
@@ -117,6 +146,22 @@ pub enum PlannerEvent {
         step_index: u32,
         attempt: u32,
         raw_output: String,
+    },
+    /// Context had too few actionable elements, retrying.
+    EmptyContextRetry {
+        step_index: u32,
+        actionable_count: usize,
+        retry_attempt: u32,
+    },
+    /// Grounding validation failed (element ID not in context or blocking error).
+    GroundingRejected {
+        step_index: u32,
+        reason: String,
+    },
+    /// Loop detected in agent behaviour.
+    LoopDetected {
+        step_index: u32,
+        signal: String,
     },
 }
 
@@ -168,11 +213,29 @@ mod tests {
     fn test_planned_action_done_roundtrip() {
         let action = PlannedAction::Done {
             summary: "Login successful".into(),
+            evidence_ids: vec!["dom:welcome-banner".into()],
         };
         let json = serde_json::to_string(&action).unwrap();
         let parsed: PlannedAction = serde_json::from_str(&json).unwrap();
         match parsed {
-            PlannedAction::Done { summary } => assert_eq!(summary, "Login successful"),
+            PlannedAction::Done { summary, evidence_ids } => {
+                assert_eq!(summary, "Login successful");
+                assert_eq!(evidence_ids, vec!["dom:welcome-banner"]);
+            }
+            _ => panic!("Wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_planned_action_done_without_evidence_deserializes() {
+        // Backwards compatibility: old LLM responses without evidence_ids should still parse
+        let json = r#"{"type":"done","summary":"All done"}"#;
+        let parsed: PlannedAction = serde_json::from_str(json).unwrap();
+        match parsed {
+            PlannedAction::Done { summary, evidence_ids } => {
+                assert_eq!(summary, "All done");
+                assert!(evidence_ids.is_empty());
+            }
             _ => panic!("Wrong variant"),
         }
     }
@@ -229,7 +292,7 @@ mod tests {
                 action: "navigate".into(),
                 params: serde_json::json!({"url": "https://example.com"}),
             },
-            PlannedAction::Done { summary: "Done!".into() },
+            PlannedAction::Done { summary: "Done!".into(), evidence_ids: vec!["el1".into()] },
             PlannedAction::Fail { reason: "Not found".into() },
         ];
 

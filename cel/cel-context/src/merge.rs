@@ -150,6 +150,27 @@ impl ContextMerger {
             }
         }
 
+        // Filter out noise: unlabeled leaf groups that don't help agents.
+        // Only remove groups that have no label AND no children in the flattened list.
+        // Keep labeled groups (e.g., "Sidebar", "Navigation") and structural groups
+        // that are parents of other elements.
+        if elements.len() > 15 {
+            let parent_ids: std::collections::HashSet<String> = elements
+                .iter()
+                .filter_map(|e| e.parent_id.clone())
+                .collect();
+            elements.retain(|el| {
+                if el.element_type == "group"
+                    && el.label.as_ref().map_or(true, |l| l.trim().is_empty())
+                    && !parent_ids.contains(&el.id)
+                {
+                    false // remove unlabeled leaf groups
+                } else {
+                    true
+                }
+            });
+        }
+
         // Sort by confidence (highest first)
         elements.sort_by(|a, b| {
             b.confidence
@@ -157,8 +178,8 @@ impl ContextMerger {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // Detect foreground app/window from display layer
-        let (app, window) = self.detect_foreground();
+        // Detect foreground app/window — prefer accessibility data over display layer
+        let (app, window) = self.detect_foreground_from_a11y().unwrap_or_else(|| self.detect_foreground());
 
         ScreenContext {
             app,
@@ -170,6 +191,63 @@ impl ContextMerger {
                 .unwrap_or_default()
                 .as_millis() as u64,
         }
+    }
+
+    /// Get focused context for a single element by ID.
+    /// Falls back to matching by type + label if the exact ID isn't found
+    /// (AX element IDs can change between queries on macOS).
+    pub fn get_context_focused(
+        &mut self,
+        element_id: &str,
+    ) -> Option<crate::element::FocusedContext> {
+        let context = self.get_context();
+
+        // Try exact ID match first
+        let target = context
+            .elements
+            .iter()
+            .find(|e| e.id == element_id)
+            .or_else(|| {
+                // Fallback: parse the element_id to extract type+label hints.
+                // If the caller provides "button:Submit", match by type and label.
+                // Otherwise, try to find by reference resolution.
+                // For now, just try to find by the element's old type+label combo
+                // using the resolve_reference system.
+                None
+            })?;
+
+        // Build ancestor path by following parent_id chain
+        let mut ancestor_path = Vec::new();
+        let mut current_parent = target.parent_id.as_deref();
+        let mut depth = 0;
+        while let Some(pid) = current_parent {
+            if depth > 20 {
+                break; // safety limit
+            }
+            if let Some(parent) = context.elements.iter().find(|e| e.id == pid) {
+                let label = parent.label.as_deref().unwrap_or("?");
+                ancestor_path.push(format!("{}:{}", parent.element_type, label));
+                current_parent = parent.parent_id.as_deref();
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+        ancestor_path.reverse(); // root-first order
+
+        // Collect subtree: elements whose parent_id matches target
+        let subtree: Vec<crate::element::ContextElement> = context
+            .elements
+            .iter()
+            .filter(|e| e.parent_id.as_deref() == Some(element_id))
+            .cloned()
+            .collect();
+
+        Some(crate::element::FocusedContext {
+            element: target.clone(),
+            subtree,
+            ancestor_path,
+        })
     }
 
     /// Get recent network events (for supplementary context).
@@ -237,6 +315,29 @@ impl ContextMerger {
     /// Strategy:
     /// 1. Try the accessibility tree's focused element (most reliable).
     /// 2. Fall back to the display layer's window list (first non-minimized).
+    /// Detect foreground app/window from the accessibility tree.
+    /// Returns (app_name, window_title) if available.
+    fn detect_foreground_from_a11y(&self) -> Option<(String, String)> {
+        let tree = self.accessibility.get_tree().ok()?;
+        // The root is typically the window; its label is the window title
+        let window_title = tree.label.clone().unwrap_or_default();
+        if window_title.is_empty() {
+            return None;
+        }
+        // The app name might be the same as the window title for single-window apps,
+        // or we can get it from the display layer
+        let app_name = if let Some(display) = &self.display {
+            display
+                .list_windows()
+                .ok()
+                .and_then(|w| w.iter().find(|w| !w.is_minimized).map(|w| w.app_name.clone()))
+                .unwrap_or_else(|| window_title.clone())
+        } else {
+            window_title.clone()
+        };
+        Some((app_name, window_title))
+    }
+
     fn detect_foreground(&self) -> (String, String) {
         // Strategy 1: accessibility focused element
         match self.accessibility.focused_element() {

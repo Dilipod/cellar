@@ -23,6 +23,7 @@ Thumbs.db
 Desktop.ini
 
 # IDE
+.claude/
 .idea/
 .vscode/
 *.swp
@@ -41,3 +42,5 @@ benchmarks/
 
 # Research / notes (not committed)
 .research/
+
+live-view/dashboard/.next

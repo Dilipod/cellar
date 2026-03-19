@@ -415,18 +415,46 @@ pub async fn plan_step(
     model: Option<String>,
     endpoint: Option<String>,
     max_tokens: Option<u32>,
+    max_steps: Option<u32>,
+    loop_warning: Option<String>,
 ) -> napi::Result<String> {
-    let llm = build_llm_client(provider, api_key, model, endpoint)?;
+    let llm = build_llm_client(provider.clone(), api_key, model.clone(), endpoint)?;
 
     let context: cel_context::ScreenContext = serde_json::from_str(&context_json)
         .map_err(|e| napi::Error::from_reason(format!("Invalid context JSON: {}", e)))?;
 
     let history_records: Vec<cel_planner::StepRecord> =
         serde_json::from_str(&history_json).unwrap_or_default();
+    let step_count = history_records.len() as u32;
     let history = cel_planner::history::StepHistory::from_records(history_records);
 
+    // Determine model tier for prompt optimization
+    let model_id = model
+        .or_else(|| provider.as_ref().map(|p| cel_llm::ProviderKind::from(p.as_str()).default_model().to_string()))
+        .unwrap_or_default();
+    let profile = cel_llm::ModelProfile::from_model_id(&model_id);
+    let (context_detail, effective_max_steps) = match profile.tier {
+        cel_llm::ModelTier::Flash => (cel_planner::ContextDetail::ActionableOnly, max_steps.unwrap_or(20)),
+        cel_llm::ModelTier::Standard => (cel_planner::ContextDetail::Full, max_steps.unwrap_or(30)),
+        cel_llm::ModelTier::Premium => (cel_planner::ContextDetail::Full, max_steps.unwrap_or(50)),
+    };
+
     let system = cel_planner::prompt::system_prompt();
-    let user = cel_planner::prompt::build_user_prompt(&goal, &context, &history);
+    let (max_elements, max_history, max_network) = match profile.tier {
+        cel_llm::ModelTier::Flash => (20, 5, 0),      // Minimal for fast models
+        cel_llm::ModelTier::Standard => (40, 10, 5),   // Default
+        cel_llm::ModelTier::Premium => (60, 15, 10),   // Extended for capable models
+    };
+    let opts = cel_planner::prompt::PromptOptions {
+        step_index: step_count,
+        max_steps: effective_max_steps,
+        loop_warning: loop_warning.as_deref(),
+        context_detail,
+        max_elements,
+        max_history_steps: max_history,
+        max_network_events: max_network,
+    };
+    let user = cel_planner::prompt::build_user_prompt(&goal, &context, &history, &opts);
 
     let raw = llm
         .complete(&system, &user, max_tokens.unwrap_or(2048))
@@ -443,6 +471,231 @@ pub async fn plan_step(
     })?;
 
     serde_json::to_string(&step).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Build the system + user prompts for planning WITHOUT calling the LLM.
+/// Returns JSON: { "system": "...", "user": "..." }
+///
+/// Use this to get the exact same prompts that `plan_step` would use,
+/// then call `llm_complete_with_image` separately with a screenshot attached.
+/// This enables vision fallback in the TypeScript goal runner.
+#[napi]
+pub fn build_plan_prompt(
+    goal: String,
+    context_json: String,
+    history_json: String,
+    max_steps: Option<u32>,
+    loop_warning: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+) -> napi::Result<String> {
+    let context: cel_context::ScreenContext = serde_json::from_str(&context_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid context JSON: {}", e)))?;
+
+    let history_records: Vec<cel_planner::StepRecord> =
+        serde_json::from_str(&history_json).unwrap_or_default();
+    let step_count = history_records.len() as u32;
+    let history = cel_planner::history::StepHistory::from_records(history_records);
+
+    // Determine model tier for prompt optimization
+    let model_id = model
+        .or_else(|| provider.as_ref().map(|p| cel_llm::ProviderKind::from(p.as_str()).default_model().to_string()))
+        .unwrap_or_default();
+    let profile = cel_llm::ModelProfile::from_model_id(&model_id);
+    let (context_detail, effective_max_steps) = match profile.tier {
+        cel_llm::ModelTier::Flash => (cel_planner::ContextDetail::ActionableOnly, max_steps.unwrap_or(20)),
+        cel_llm::ModelTier::Standard => (cel_planner::ContextDetail::Full, max_steps.unwrap_or(30)),
+        cel_llm::ModelTier::Premium => (cel_planner::ContextDetail::Full, max_steps.unwrap_or(50)),
+    };
+
+    let system = cel_planner::prompt::system_prompt();
+    let (max_elements, max_history, max_network) = match profile.tier {
+        cel_llm::ModelTier::Flash => (20, 5, 0),
+        cel_llm::ModelTier::Standard => (40, 10, 5),
+        cel_llm::ModelTier::Premium => (60, 15, 10),
+    };
+    let opts = cel_planner::prompt::PromptOptions {
+        step_index: step_count,
+        max_steps: effective_max_steps,
+        loop_warning: loop_warning.as_deref(),
+        context_detail,
+        max_elements,
+        max_history_steps: max_history,
+        max_network_events: max_network,
+    };
+    let user = cel_planner::prompt::build_user_prompt(&goal, &context, &history, &opts);
+
+    serde_json::to_string(&serde_json::json!({
+        "system": system,
+        "user": user,
+    }))
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// --- Context References ---
+
+/// Create a resilient ContextReference from a ContextElement JSON.
+/// The reference can be used to re-find the same element in future context snapshots.
+///
+/// `element_json`: JSON string of a ContextElement.
+/// `screen_width`, `screen_height`: Screen dimensions for normalized coordinates.
+///
+/// Returns JSON string of ContextReference.
+#[napi]
+pub fn make_reference(
+    element_json: String,
+    screen_width: u32,
+    screen_height: u32,
+) -> napi::Result<String> {
+    let element: cel_context::ContextElement = serde_json::from_str(&element_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid element JSON: {}", e)))?;
+    let reference = element.to_reference(screen_width, screen_height);
+    serde_json::to_string(&reference).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Resolve a ContextReference against a ScreenContext snapshot.
+/// Returns the best-matching ContextElement as JSON, or "null" if no match.
+///
+/// `context_json`: JSON string of a ScreenContext.
+/// `reference_json`: JSON string of a ContextReference.
+#[napi]
+pub fn resolve_reference(
+    context_json: String,
+    reference_json: String,
+) -> napi::Result<String> {
+    let context: cel_context::ScreenContext = serde_json::from_str(&context_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid context JSON: {}", e)))?;
+    let reference: cel_context::ContextReference = serde_json::from_str(&reference_json)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid reference JSON: {}", e)))?;
+
+    match cel_context::resolve_reference(&context, &reference) {
+        Some(element) => {
+            serde_json::to_string(element).map_err(|e| napi::Error::from_reason(e.to_string()))
+        }
+        None => Ok("null".to_string()),
+    }
+}
+
+// --- Focused Context ---
+
+/// Get focused context for a single element by ID.
+/// Returns high-fidelity data: element, subtree, ancestor path.
+/// Returns JSON string of FocusedContext, or "null" if not found.
+#[napi]
+pub fn get_context_focused(element_id: String) -> napi::Result<String> {
+    let a11y = cel_accessibility::create_tree();
+    let display = cel_display::create_capture();
+    let network = cel_network::create_monitor();
+    let mut merger = cel_context::ContextMerger::with_all(a11y, display, network);
+
+    match merger.get_context_focused(&element_id) {
+        Some(focused) => {
+            serde_json::to_string(&focused).map_err(|e| napi::Error::from_reason(e.to_string()))
+        }
+        None => Ok("null".to_string()),
+    }
+}
+
+// --- Watchdog ---
+
+static WATCHDOG: std::sync::OnceLock<Mutex<cel_context::ContextWatchdog>> =
+    std::sync::OnceLock::new();
+
+/// Initialize the context watchdog for change detection.
+#[napi]
+pub fn start_watchdog() -> napi::Result<()> {
+    let _ = WATCHDOG.get_or_init(|| Mutex::new(cel_context::ContextWatchdog::new()));
+    Ok(())
+}
+
+/// Poll for watchdog events by comparing current context against last snapshot.
+/// Returns JSON array of CelEvents.
+#[napi]
+pub fn poll_events() -> napi::Result<String> {
+    let wd_mutex = WATCHDOG
+        .get()
+        .ok_or_else(|| napi::Error::from_reason("Watchdog not started. Call start_watchdog() first.".to_string()))?;
+
+    let mut wd = wd_mutex
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("Watchdog lock poisoned: {}", e)))?;
+
+    // Get fresh context
+    let a11y = cel_accessibility::create_tree();
+    let display = cel_display::create_capture();
+    let network = cel_network::create_monitor();
+    let mut merger = cel_context::ContextMerger::with_all(a11y, display, network);
+    let context = merger.get_context();
+
+    // Check network idle
+    let network_idle = merger.recent_network_events().is_empty();
+
+    let events = wd.tick(&context, network_idle);
+    serde_json::to_string(&events).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Stop and reset the watchdog.
+#[napi]
+pub fn stop_watchdog() -> napi::Result<()> {
+    if let Some(wd_mutex) = WATCHDOG.get() {
+        if let Ok(mut wd) = wd_mutex.lock() {
+            wd.reset();
+        }
+    }
+    Ok(())
+}
+
+// --- CDP ---
+
+/// Install the LaunchAgent that enables CDP on all Electron apps.
+/// Returns "installed" if newly installed, "already_installed" if already present.
+#[napi]
+pub fn cdp_setup_install() -> napi::Result<String> {
+    match cel_cdp::install_cdp_launch_agent() {
+        Ok(true) => Ok("installed".to_string()),
+        Ok(false) => Ok("already_installed".to_string()),
+        Err(e) => Err(napi::Error::from_reason(e)),
+    }
+}
+
+/// Uninstall the CDP LaunchAgent.
+#[napi]
+pub fn cdp_setup_uninstall() -> napi::Result<String> {
+    match cel_cdp::uninstall_cdp_launch_agent() {
+        Ok(true) => Ok("uninstalled".to_string()),
+        Ok(false) => Ok("not_installed".to_string()),
+        Err(e) => Err(napi::Error::from_reason(e)),
+    }
+}
+
+/// Check if the CDP LaunchAgent is installed.
+#[napi]
+pub fn cdp_is_setup() -> bool {
+    cel_cdp::is_cdp_setup_installed()
+}
+
+/// Discover available CDP targets. Returns JSON array of CdpTarget.
+#[napi]
+pub fn cdp_discover_targets() -> napi::Result<String> {
+    let targets = cel_cdp::discover_cdp_targets();
+    serde_json::to_string(&targets).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Extract page content from the first available CDP target.
+/// Returns JSON string of PageContent, or "null" if no CDP target available.
+#[napi]
+pub async fn cdp_get_page_content() -> napi::Result<String> {
+    let client = match cel_cdp::connect_to_focused_app().await {
+        Some(c) => c,
+        None => return Ok("null".to_string()),
+    };
+
+    match cel_cdp::extract_page_content(&client).await {
+        Ok(content) => {
+            serde_json::to_string(&content).map_err(|e| napi::Error::from_reason(e.to_string()))
+        }
+        Err(e) => Err(napi::Error::from_reason(format!("CDP content extraction failed: {}", e))),
+    }
 }
 
 /// Send an LLM chat completion with an image. Returns the model response string.

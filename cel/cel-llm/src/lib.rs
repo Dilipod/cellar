@@ -8,7 +8,7 @@ mod config;
 mod error;
 
 pub use client::LlmClient;
-pub use config::{LlmProviderConfig, ProviderKind};
+pub use config::{LlmProviderConfig, ModelProfile, ModelTier, ProviderKind};
 pub use error::LlmError;
 
 /// Content part in a chat message (text or image).

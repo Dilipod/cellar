@@ -18,6 +18,7 @@ cel-network = { workspace = true }
 cel-vision = { workspace = true }
 cel-store = { workspace = true }
 cel-planner = { workspace = true }
+cel-cdp = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

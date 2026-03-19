@@ -6,7 +6,17 @@
  * For development/testing, a mock implementation is used when the native module isn't available.
  */
 
-import type { ScreenContext, Bounds, PlannedStep, PlannerStepRecord } from "./types.js";
+import type {
+  ScreenContext,
+  ContextElement,
+  ContextReference,
+  FocusedContext,
+  CelEvent,
+  PageContent,
+  Bounds,
+  PlannedStep,
+  PlannerStepRecord,
+} from "./types.js";
 
 /** CEL native module interface — matches the napi exports from cel-napi. */
 export interface CelNative {
@@ -51,11 +61,49 @@ export interface CelNative {
   addScopedKnowledge(dbPath: string, content: string, source: string, workflowScope: string | null, tags: string | null): number;
   // Eviction / TTL
   runEviction(dbPath: string, runRetentionDays: number, knowledgeRetentionDays: number): string;
+  // Context References
+  makeReference(elementJson: string, screenWidth: number, screenHeight: number): string;
+  resolveReference(contextJson: string, referenceJson: string): string;
+  // Focused Context
+  getContextFocused(elementId: string): string;
+  // CDP
+  cdpSetupInstall(): string;
+  cdpSetupUninstall(): string;
+  cdpIsSetup(): boolean;
+  cdpDiscoverTargets(): string;
+  cdpGetPageContent(): Promise<string>;
+  // Watchdog
+  startWatchdog(): void;
+  pollEvents(): string;
+  stopWatchdog(): void;
   // Planner
   planStep(
     goal: string,
     contextJson: string,
     historyJson: string,
+    provider?: string,
+    apiKey?: string,
+    model?: string,
+    endpoint?: string,
+    maxTokens?: number,
+    maxSteps?: number,
+    loopWarning?: string,
+  ): Promise<string>;
+  // Prompt builder (returns { system, user } JSON without calling LLM)
+  buildPlanPrompt(
+    goal: string,
+    contextJson: string,
+    historyJson: string,
+    maxSteps?: number,
+    loopWarning?: string,
+    provider?: string,
+    model?: string,
+  ): string;
+  // Vision LLM call
+  llmCompleteWithImage(
+    systemPrompt: string,
+    imageBase64: string,
+    userPrompt: string,
     provider?: string,
     apiKey?: string,
     model?: string,
@@ -382,14 +430,165 @@ export class Cel {
     goal: string,
     context: ScreenContext,
     history: PlannerStepRecord[] = [],
+    options?: {
+      maxSteps?: number;
+      loopWarning?: string;
+    },
   ): Promise<PlannedStep> {
     if (!this.native) {
       throw new Error("Native module not available — planner requires cel-napi");
     }
     const contextJson = JSON.stringify(context);
     const historyJson = JSON.stringify(history);
-    const resultJson = await this.native.planStep(goal, contextJson, historyJson);
+    const resultJson = await this.native.planStep(
+      goal,
+      contextJson,
+      historyJson,
+      undefined, // provider — use env default
+      undefined, // apiKey
+      undefined, // model
+      undefined, // endpoint
+      undefined, // maxTokens
+      options?.maxSteps,
+      options?.loopWarning,
+    );
     return JSON.parse(resultJson);
+  }
+
+  /**
+   * Build the system + user prompts for planning WITHOUT calling the LLM.
+   * Use this to get the exact prompts, then call planStepWithVision() separately.
+   */
+  buildPlanPrompt(
+    goal: string,
+    context: ScreenContext,
+    history: PlannerStepRecord[] = [],
+    options?: { maxSteps?: number; loopWarning?: string },
+  ): { system: string; user: string } {
+    if (!this.native) {
+      throw new Error("Native module not available — buildPlanPrompt requires cel-napi");
+    }
+    const result = this.native.buildPlanPrompt(
+      goal,
+      JSON.stringify(context),
+      JSON.stringify(history),
+      options?.maxSteps,
+      options?.loopWarning,
+    );
+    return JSON.parse(result);
+  }
+
+  /**
+   * Plan a step with vision: sends structured context + screenshot to the LLM.
+   * Used as a fallback when DOM is sparse or after consecutive failures.
+   * Produces the exact same PlannedStep output as planStep().
+   */
+  async planStepWithVision(
+    goal: string,
+    context: ScreenContext,
+    screenshotBase64: string,
+    history: PlannerStepRecord[] = [],
+    options?: { maxSteps?: number; loopWarning?: string },
+  ): Promise<PlannedStep> {
+    if (!this.native) {
+      throw new Error("Native module not available — vision requires cel-napi");
+    }
+    // Get the same prompts planStep() would use
+    const prompts = this.buildPlanPrompt(goal, context, history, options);
+    // Add vision note to user prompt
+    const userWithVision = prompts.user +
+      "\n\n(A screenshot of the current screen is attached. Use it to identify elements " +
+      "the structured context may have missed, especially overlays, cookie banners, or modals.)";
+    // Call LLM with image
+    const raw = await this.native.llmCompleteWithImage(
+      prompts.system,
+      screenshotBase64,
+      userWithVision,
+    );
+    const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    return JSON.parse(cleaned);
+  }
+
+  // --- Context References ---
+
+  /** Create a resilient reference from an element.
+   * The reference can be used to re-find the same element in future context snapshots. */
+  makeReference(element: ContextElement, screenWidth = 1920, screenHeight = 1080): ContextReference {
+    if (!this.native) {
+      return { element_type: element.element_type, label: element.label };
+    }
+    return JSON.parse(
+      this.native.makeReference(JSON.stringify(element), screenWidth, screenHeight),
+    );
+  }
+
+  /** Resolve a reference against a screen context snapshot.
+   * Returns the best-matching element, or null if no match. */
+  resolveReference(context: ScreenContext, ref_: ContextReference): ContextElement | null {
+    if (!this.native) return null;
+    const result = this.native.resolveReference(
+      JSON.stringify(context),
+      JSON.stringify(ref_),
+    );
+    const parsed = JSON.parse(result);
+    return parsed === null ? null : parsed;
+  }
+
+  // --- Focused Context ---
+
+  /** Get high-fidelity context for a single element by ID. */
+  getContextFocused(elementId: string): FocusedContext | null {
+    if (!this.native) return null;
+    const result = this.native.getContextFocused(elementId);
+    const parsed = JSON.parse(result);
+    return parsed === null ? null : parsed;
+  }
+
+  // --- Watchdog ---
+
+  /** Start the context watchdog for change detection. */
+  startWatchdog(): void {
+    this.native?.startWatchdog();
+  }
+
+  /** Poll for watchdog events. Returns events that occurred since last poll. */
+  pollEvents(): CelEvent[] {
+    if (!this.native) return [];
+    return JSON.parse(this.native.pollEvents());
+  }
+
+  /** Stop and reset the watchdog. */
+  stopWatchdog(): void {
+    this.native?.stopWatchdog();
+  }
+
+  // --- CDP ---
+
+  /** Get page content from CDP if available. Returns null if no CDP target found. */
+  async getCdpPageContent(): Promise<PageContent | null> {
+    if (!this.native) return null;
+    try {
+      const result = await this.native.cdpGetPageContent();
+      if (result === "null") return null;
+      return JSON.parse(result);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Discover CDP targets on this machine. */
+  discoverCdpTargets(): Array<{ app_name: string; pid: number; port: number; ws_url: string }> {
+    if (!this.native) return [];
+    try {
+      return JSON.parse(this.native.cdpDiscoverTargets());
+    } catch {
+      return [];
+    }
+  }
+
+  /** Check if CDP setup (LaunchAgent) is installed. */
+  isCdpSetup(): boolean {
+    return this.native?.cdpIsSetup() ?? false;
   }
 
   /** Add a scoped knowledge fact. */

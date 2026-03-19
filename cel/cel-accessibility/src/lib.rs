@@ -13,6 +13,9 @@ mod tree;
 #[cfg(target_os = "linux")]
 mod linux;
 
+#[cfg(target_os = "macos")]
+mod macos;
+
 pub use tree::{
     AccessibilityElement, AccessibilityError, AccessibilityTree, Bounds, ElementRole, ElementState,
     StubAccessibility,
@@ -26,6 +29,15 @@ pub fn create_tree() -> Box<dyn AccessibilityTree> {
             Ok(provider) => return Box::new(provider),
             Err(e) => {
                 tracing::warn!("AT-SPI2 not available, falling back to stub: {}", e);
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        match macos::MacAccessibility::new() {
+            Ok(provider) => return Box::new(provider),
+            Err(e) => {
+                tracing::warn!("AXUIElement not available, falling back to stub: {}", e);
             }
         }
     }

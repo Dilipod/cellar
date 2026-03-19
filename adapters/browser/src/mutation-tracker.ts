@@ -9,7 +9,7 @@
 
 import type { Page } from "playwright";
 import type { ContextElement } from "@cellar/agent";
-import { extractDOM, type RawDOMElement } from "./dom-extractor.js";
+import { extractDOM, type RawDOMElement, type Evaluator } from "./dom-extractor.js";
 import { mapElements } from "./element-mapper.js";
 import { sanitizeElements } from "./sanitizer.js";
 
@@ -126,13 +126,13 @@ export class MutationTracker {
    * Get elements — uses incremental updates when possible,
    * falls back to full extraction when needed.
    */
-  async getElements(page: Page): Promise<ContextElement[]> {
-    const currentUrl = page.url();
+  async getElements(page: Evaluator, currentUrl?: string): Promise<ContextElement[]> {
+    const url = currentUrl ?? (typeof (page as any).url === "function" ? (page as any).url() : "");
 
     // Full re-extraction if: first call, URL changed, or observer not installed
     if (
       this.cache.size === 0 ||
-      currentUrl !== this.lastUrl ||
+      url !== this.lastUrl ||
       !this.observerInstalled
     ) {
       return this.fullExtraction(page);
@@ -160,7 +160,7 @@ export class MutationTracker {
   }
 
   /** Force a full re-extraction, replacing the entire cache. */
-  async fullExtraction(page: Page): Promise<ContextElement[]> {
+  async fullExtraction(page: Evaluator): Promise<ContextElement[]> {
     const rawElements = await extractDOM(page);
     let elements = mapElements(rawElements);
 
@@ -174,7 +174,7 @@ export class MutationTracker {
       this.cache.set(el.id, el);
     }
 
-    this.lastUrl = page.url();
+    this.lastUrl = typeof (page as any).url === "function" ? (page as any).url() : "";
     this.lastExtractionTime = Date.now();
 
     // Install observer after first extraction
@@ -184,7 +184,7 @@ export class MutationTracker {
   }
 
   /** Install the MutationObserver in the page. */
-  private async installObserver(page: Page): Promise<void> {
+  private async installObserver(page: Evaluator): Promise<void> {
     try {
       await page.evaluate(OBSERVER_SCRIPT);
       this.observerInstalled = true;
@@ -194,7 +194,7 @@ export class MutationTracker {
   }
 
   /** Drain pending mutations from the page. */
-  private async drainMutations(page: Page): Promise<MutationRecord[]> {
+  private async drainMutations(page: Evaluator): Promise<MutationRecord[]> {
     try {
       return (await page.evaluate(DRAIN_SCRIPT)) as MutationRecord[];
     } catch {
@@ -209,7 +209,7 @@ export class MutationTracker {
    * For added/changed elements, re-extract the affected subtrees.
    */
   private async applyMutations(
-    page: Page,
+    page: Evaluator,
     mutations: MutationRecord[],
   ): Promise<void> {
     const removedIds = new Set<string>();

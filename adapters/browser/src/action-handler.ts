@@ -72,6 +72,12 @@ export class ActionHandler {
       case "reload":
         return this.reload();
 
+      case "click":
+        return this.click(params.selector as string);
+
+      case "dismiss_cookies":
+        return this.dismissCookieConsent();
+
       default:
         return { success: false, error: `Unknown browser action: ${action}` };
     }
@@ -203,5 +209,68 @@ export class ActionHandler {
     } catch (error) {
       return { success: false, error: String(error) };
     }
+  }
+
+  private async click(selector: string): Promise<ActionResult> {
+    try {
+      await this.page.locator(selector).first().click({ timeout: 5000 });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  }
+
+  /**
+   * Dismiss cookie consent banners using common patterns.
+   * Tries multiple selectors in priority order. No-ops if no banner found.
+   */
+  async dismissCookieConsent(): Promise<ActionResult> {
+    const selectors = [
+      // Common cookie consent buttons (accept/agree/OK)
+      '[id*="cookie"] button[id*="accept"]',
+      '[id*="cookie"] button[id*="agree"]',
+      '[class*="cookie"] button[class*="accept"]',
+      '[class*="cookie"] button[class*="agree"]',
+      '[id*="consent"] button[id*="accept"]',
+      '[id*="consent"] button[class*="accept"]',
+      '[class*="consent"] button[class*="accept"]',
+      // Data attribute patterns
+      '[data-testid*="cookie-accept"]',
+      '[data-testid*="accept-cookies"]',
+      '[data-action="accept-cookies"]',
+      '[data-cookiebanner] button:first-of-type',
+      // Aria label patterns
+      'button[aria-label*="accept" i]',
+      'button[aria-label*="agree" i]',
+      'button[aria-label*="cookie" i][aria-label*="accept" i]',
+      // CMP (Consent Management Platform) patterns
+      '#onetrust-accept-btn-handler',
+      '.cc-accept',
+      '.cc-btn.cc-dismiss',
+      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+      '#didomi-notice-agree-button',
+      '.sp_choice_type_11',
+      // Generic patterns (less specific, tried last)
+      '[class*="cookie-banner"] button:not([class*="reject"]):not([class*="decline"]):first-of-type',
+      '[class*="cookie-notice"] button:not([class*="reject"]):not([class*="decline"]):first-of-type',
+      '[role="dialog"] button:not([class*="reject"]):not([class*="decline"]):first-of-type',
+    ];
+
+    for (const selector of selectors) {
+      try {
+        const el = this.page.locator(selector).first();
+        if (await el.isVisible({ timeout: 500 })) {
+          await el.click({ timeout: 2000 });
+          // Wait a moment for the banner to dismiss
+          await this.page.waitForTimeout(500);
+          return { success: true, data: { selector } };
+        }
+      } catch {
+        // Selector not found or not clickable — try next
+      }
+    }
+
+    // No cookie banner found — that's OK
+    return { success: true, data: { noBannerFound: true } };
   }
 }
