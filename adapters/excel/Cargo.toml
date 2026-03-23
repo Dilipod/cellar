@@ -1,0 +1,24 @@
+[package]
+name = "adapter-excel"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+description = "CEL adapter for Microsoft Excel via COM automation"
+
+[dependencies]
+adapter-common = { workspace = true }
+cel-context = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_System_Com",
+    "Win32_System_Ole",
+] }

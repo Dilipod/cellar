@@ -1,0 +1,8 @@
+packages:
+  - "agent"
+  - "recorder"
+  - "live-view"
+  - "registry"
+  - "cli"
+  - "adapters/browser"
+  - "e2e"
